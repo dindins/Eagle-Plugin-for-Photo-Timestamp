@@ -95,7 +95,7 @@ const Settings = (() => {
         try {
             localStorage.setItem('TimestampPluginSettings', JSON.stringify(toSave));
         } catch (e) {
-            console.warn('[TimestampTool] 無法儲存設定:', e);
+            void('[TimestampTool] 無法儲存設定:', e);
         }
     }
 
@@ -163,7 +163,7 @@ const Settings = (() => {
                 }
             }
         } catch (e) {
-            console.warn('[TimestampTool] 無法讀取設定:', e);
+            void('[TimestampTool] 無法讀取設定:', e);
         } finally {
             _isLoading = false;
         }

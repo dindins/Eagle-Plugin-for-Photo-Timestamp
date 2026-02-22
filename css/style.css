@@ -3,7 +3,9 @@
    使用純原生 CSS，無外部依賴
    ============================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+/* Google Fonts 外部載入已移除 — 在離線環境或網路不穩時，
+   外部資源請求失敗可能在 Chromium 中產生網路錯誤，進而觸發 Eagle 的 DevTools 保護機制。
+   改用系統內建字體堆疊，確保完全離線可用。 */
 
 *,
 *::before,

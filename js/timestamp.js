@@ -46,7 +46,7 @@ function loadImage(filePath) {
             img.onerror = (e) => reject(new Error(`HTMLImageElement onload 失敗\n路徑：${filePath}`));
             img.src = `data:${mime};base64,${b64}`;
         } catch (e) {
-            console.error('[TimestampTool] loadImage Error:', e);
+            void('[TimestampTool] loadImage Error:', e);
             reject(new Error(`載入圖片失敗: ${e.message}\n路徑：${filePath}`));
         }
     });
@@ -91,7 +91,7 @@ function readExifDate(filePath) {
             return new Date(dStr);
         }
     } catch (e) {
-        console.warn('[TimestampTool] EXIF 讀取例外:', e);
+        void('[TimestampTool] EXIF 讀取例外:', e);
     } finally {
         if (fd !== null) {
             try { require('fs').closeSync(fd); } catch (e) { }
@@ -234,7 +234,7 @@ async function renderPreview(filePath, opts, targetCanvas) {
 
         drawTimestampToContext(ctx, targetCanvas, img, opts);
     } catch (err) {
-        console.error('[TimestampTool] renderPreview 發生錯誤:', err);
+        void('[TimestampTool] renderPreview 發生錯誤:', err);
         throw err; // 將錯誤往上拋，讓 main.js 接住
     }
 }

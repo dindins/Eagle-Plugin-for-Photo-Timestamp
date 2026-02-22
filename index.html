@@ -5,33 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>時間戳記工具</title>
-  <!-- 全域錯誤攔截優先載入 -->
-  <!-- 全域錯誤攔截暫時關閉，讓開發者工具可以完全接收
-  <script>
-    window.onerror = function (msg, url, line, col, error) {
-      setTimeout(() => {
-        const errorDiv = document.createElement('div');
-        errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff0000;color:#fff;padding:15px;font-size:14px;z-index:999999;word-break:break-all;font-weight:bold;';
-        errorDiv.innerHTML = `🚨 致命錯誤攔截：<br>${msg}<br><small>${url}:${line}:${col}</small><br><pre>${error ? error.stack : ''}</pre>`;
-        document.body.appendChild(errorDiv);
-      }, 100);
-      return true; // 強制攔截，阻止 Electron 彈出 DevTools
-    };
-    window.addEventListener('unhandledrejection', (event) => {
-      let reason = event.reason;
-      let msg = '未處理的 Promise 拒絕';
-      let stack = '';
-      if (reason instanceof Error) {
-        msg += ': ' + reason.message;
-        stack = reason.stack;
-      } else {
-        msg += ': ' + JSON.stringify(reason);
-      }
-      window.onerror(msg, '', 0, 0, { stack: stack });
-      event.preventDefault(); // 阻止 DevTools
-    });
-  </script>
-  -->
+  <!-- 全域錯誤攔截已移至 main.js 最頂部的 DevTools 防護層 -->
   <link rel="stylesheet" href="css/style.css" />
 </head>
 
