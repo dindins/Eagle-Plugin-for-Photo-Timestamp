@@ -8,6 +8,16 @@
 
 'use strict';
 
+// 攔截 Eagle API 暖機期間產生的 unhandled rejection，避免控制台噪音
+// Eagle 內部的 getSelected() 在 plugin-create 未就緒時，除了 reject 外部 promise 之外，
+// 還會在內部創建一個我們無法從外部 .catch() 的獨立 promise，因此在此全局攔截並靜默它
+window.addEventListener('unhandledrejection', (event) => {
+    if (event.reason && typeof event.reason.message === 'string' &&
+        event.reason.message.includes('plugin-create')) {
+        event.preventDefault();
+    }
+});
+
 const SUPPORTED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
 
 // ── UI 工具 ────────────────────────────────

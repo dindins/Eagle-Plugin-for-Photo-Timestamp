@@ -116,6 +116,8 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
         shadow = true,         // 文字陰影（預設開啟）
     } = opts;
 
+    // 重置 transform，防止不同 DPI 設定的 PC 上 transform 累積導致渲染偏移
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
@@ -193,14 +195,14 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
         }
 
         ctx.fillText(text, p.x, p.y);
-
-        // 重置陰影，避免影響後續繪製
+    } catch (e) {
+        throw new Error('Canvas 繪製文字時發生錯誤: ' + e.message);
+    } finally {
+        // 無論成功或失敗，都必須重置陰影，避免殘留狀態影響下一次繪製（日期重疊 BUG 的防護）
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
-    } catch (e) {
-        throw new Error('Canvas 繪製文字時發生錯誤: ' + e.message);
     }
 }
 
