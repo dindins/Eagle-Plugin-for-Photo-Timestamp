@@ -8,15 +8,26 @@
 
 'use strict';
 
-// 攔截 Eagle API 暖機期間產生的 unhandled rejection，避免控制台噪音
-// Eagle 內部的 getSelected() 在 plugin-create 未就緒時，除了 reject 外部 promise 之外，
-// 還會在內部創建一個我們無法從外部 .catch() 的獨立 promise，因此在此全局攔截並靜默它
+// 雙層攔截 Eagle API 暖機期間產生的 unhandled rejection：
+// Eagle 的 getSelected() 在 plugin-create 未就緒時，會在內部創建一個獨立 promise 並 reject，
+// 這個 promise 可能在 web context（window）或 Node.js context（process）中，需要雙層攔截才能靜默
 window.addEventListener('unhandledrejection', (event) => {
     if (event.reason && typeof event.reason.message === 'string' &&
         event.reason.message.includes('plugin-create')) {
         event.preventDefault();
     }
 });
+// Node.js / Electron process 層攔截（捕獲不在 window scope 內的 promise rejection）
+try {
+    if (typeof process !== 'undefined' && typeof process.on === 'function') {
+        process.on('unhandledRejection', (reason) => {
+            if (reason && typeof reason.message === 'string' &&
+                reason.message.includes('plugin-create')) {
+                // 靜默：這是 Eagle API 暖機期間的已知錯誤，不影響功能
+            }
+        });
+    }
+} catch (_) { /* Eagle 插件環境不支援 process 時直接忽略 */ }
 
 const SUPPORTED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
 
@@ -87,6 +98,7 @@ let isPluginCreated = false;
 let isRefreshing = false;
 let isApplying = false;
 let applyCancelled = false;
+let _autoRetryOnTimeout = false; // 防止多次排程自動重試計時器
 
 // ── 刷新選取資訊 ──────────────────────────
 async function refreshSelection(passedItems = null) {
@@ -129,9 +141,22 @@ async function refreshSelection(passedItems = null) {
                         setStatus(`API 暖機中... (${initRetry + 1}/10)`, true);
                         await new Promise(r => setTimeout(r, 50));
                     } else if (apiErr && apiErr.message === 'EAGLE_API_TIMEOUT') {
-                        setStatus(`請重新點選 Eagle 主視窗裡的照片，外掛會自動捕捉！`, false);
                         console.warn('[TimestampTool] getSelected 逾時未回應，強制打斷以保護 UI。');
                         isRefreshing = false;
+                        if (!_autoRetryOnTimeout) {
+                            // 第一次逾時：靜默等待 Eagle API 初始化，3 秒後自動重試
+                            _autoRetryOnTimeout = true;
+                            setStatus('Eagle API 初始化中，稍後自動重試...', false);
+                            setTimeout(() => {
+                                _autoRetryOnTimeout = false;
+                                if (!isApplying && !isRefreshing) {
+                                    refreshSelection().catch(e => console.warn('[TimestampTool] 自動重試失敗:', e));
+                                }
+                            }, 3000);
+                        } else {
+                            // 第二次逾時：才提示使用者手動操作
+                            setStatus('請重新點選 Eagle 主視窗裡的照片，外掛會自動捕捉！', false);
+                        }
                         return;
                     } else {
                         setStatus(`API 崩潰: ${String(apiErr)}`, false);
