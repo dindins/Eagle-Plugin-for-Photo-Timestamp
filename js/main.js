@@ -428,7 +428,6 @@ async function applyTimestamps() {
 // ══════════════════════════════════════════
 
 eagle.onPluginCreate((plugin) => {
-    console.log('[TimestampTool] onPluginCreate', plugin);
 
     // 初始化設定面板 UI
     try {
@@ -528,6 +527,14 @@ eagle.onPluginCreate((plugin) => {
     setApplyBtn(false);
     isPluginCreated = true;
 
+    // 強制關閉 DevTools：部分 Eagle 版本會在偵測到特定事件時自動開啟 DevTools，
+    // 呼叫此 API 可在初始化完成後立即關閉，搭配 manifest devTools:false 雙重保護
+    try {
+        if (eagle.plugin && typeof eagle.plugin.closeDevTools === 'function') {
+            eagle.plugin.closeDevTools();
+        }
+    } catch (_) { }
+
     // 註冊右鍵選單
     try {
         if (eagle.contextMenu && typeof eagle.contextMenu.add === 'function') {
@@ -551,9 +558,8 @@ eagle.onPluginCreate((plugin) => {
                     }
                 });
             }
-        } else {
-            console.log('[TimestampTool] 當前 Eagle 版本不支援右鍵選單 API (eagle.contextMenu.add)');
         }
+        // 舊版 Eagle 不支援 contextMenu.add，靜默略過
     } catch (e) {
         console.warn('[TimestampTool] 無法註冊右鍵選單:', e);
     }
@@ -582,5 +588,5 @@ eagle.onPluginRun(() => {
 });
 
 eagle.onPluginHide(() => {
-    console.log('[TimestampTool] onPluginHide');
+    // 隱藏時無需額外操作
 });

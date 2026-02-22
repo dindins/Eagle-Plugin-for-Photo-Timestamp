@@ -1,5 +1,12 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
+## [1.6.7] - 2026-02-22
+
+### 修復 (Fixed)
+- **DevTools 仍自動開啟（主動強制關閉）**：移除 `onPluginCreate`、`onPluginHide` 的 debug `console.log` 輸出，以及右鍵選單不支援時的提示 log；部分 Eagle 版本會因偵測到 console 輸出而強制開啟 DevTools。同時在 `onPluginCreate` 初始化完成後立即呼叫 `eagle.plugin.closeDevTools()`，搭配 `manifest.json` 的 `devTools: false`，從兩個層面確保 DevTools 不被自動開啟。
+
+---
+
 ## [1.6.6] - 2026-02-22
 
 ### 修復 (Fixed)
