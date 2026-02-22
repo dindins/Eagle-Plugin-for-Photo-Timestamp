@@ -99,6 +99,7 @@ let isRefreshing = false;
 let isApplying = false;
 let applyCancelled = false;
 let _autoRetryOnTimeout = false; // 防止多次排程自動重試計時器
+let _firstShowHandled = false;  // 首次 onPluginShow/onPluginRun 需要延遲等待 Eagle API 就緒
 
 // ── 刷新選取資訊 ──────────────────────────
 async function refreshSelection(passedItems = null) {
@@ -559,17 +560,25 @@ eagle.onPluginCreate((plugin) => {
 });
 
 eagle.onPluginShow(() => {
-    // 每次插件顯示時自動抓取當前選取
-    if (isPluginCreated) {
+    if (!isPluginCreated) return;
+    // 首次顯示延遲 1 秒：onPluginCreate 完成後 Eagle item API 仍需時間初始化，
+    // 過早呼叫 getSelected() 會在 Eagle 內部（item.js）產生無法攔截的 unhandled rejection，
+    // 導致 Eagle 強制開啟 DevTools（即使 devTools:false）。延遲後 API 已就緒，不再觸發該錯誤。
+    const delay = _firstShowHandled ? 0 : 1000;
+    _firstShowHandled = true;
+    setTimeout(() => {
         refreshSelection().catch(e => console.warn('[TimestampTool] onPluginShow refreshSelection:', e));
-    }
+    }, delay);
 });
 
 eagle.onPluginRun(() => {
-    // onPluginRun 是插件被使用者觸發的主要時機，在此抓取選取照片
-    if (isPluginCreated) {
+    if (!isPluginCreated) return;
+    // 同 onPluginShow：首次觸發使用相同的延遲保護機制
+    const delay = _firstShowHandled ? 0 : 1000;
+    _firstShowHandled = true;
+    setTimeout(() => {
         refreshSelection().catch(e => console.warn('[TimestampTool] onPluginRun refreshSelection:', e));
-    }
+    }, delay);
 });
 
 eagle.onPluginHide(() => {

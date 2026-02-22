@@ -1,5 +1,12 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
+## [1.6.6] - 2026-02-22
+
+### 修復 (Fixed)
+- **DevTools 強制開啟問題（根本修復）**：`onPluginCreate` 完成後，`onPluginShow` 幾乎立刻觸發並呼叫 `eagle.item.getSelected()`，此時 Eagle `item` API 尚未完成內部初始化，導致 Eagle 在 `item.js` 內部產生一個我們無法從外部攔截的 unhandled rejection，進而觸發 Eagle 強制開啟 DevTools 的保護機制（即使 `devTools: false` 也無效）。修正方式為：首次 `onPluginShow`/`onPluginRun` 觸發時延遲 1 秒後才呼叫 `refreshSelection()`，給 Eagle API 充分的初始化時間；後續每次顯示不需延遲，不影響正常使用流暢度。
+
+---
+
 ## [1.6.5] - 2026-02-22
 
 ### 修復 (Fixed)
