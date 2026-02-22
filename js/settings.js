@@ -8,6 +8,12 @@
 
 const Settings = (() => {
 
+    // 日誌安全引用（_log 由 main.js 定義，本檔案先於 main.js 載入）
+    const _stNoop = () => {};
+    function _getLog() {
+        return window._log || { info: _stNoop, warn: _stNoop, error: _stNoop };
+    }
+
     // ── 取得當前所有設定值 ──────────────
     function getAll(filePath = null) {
         return {
@@ -33,17 +39,13 @@ const Settings = (() => {
         if (source === 'manual') {
             const val = document.getElementById('manualDatetime').value;
             return val ? new Date(val) : new Date();
-        } else if (source === 'original' && filePath) {
-            let targetDate = window.TimestampEngine ? window.TimestampEngine.readExifDate(filePath) : null;
-            if (!targetDate) {
-                try {
-                    const fs = require('fs');
-                    targetDate = fs.statSync(filePath).birthtime;
-                } catch (e) {
-                    targetDate = new Date();
-                }
+        }
+        if (source === 'original' && filePath) {
+            // 使用 TimestampEngine 統一入口讀取日期
+            if (window.TimestampEngine) {
+                return window.TimestampEngine.getDateForFile(filePath).date;
             }
-            return targetDate;
+            return new Date();
         }
         return new Date();
     }
@@ -68,18 +70,20 @@ const Settings = (() => {
         });
     }
 
-    let _isLoading = false; // 載入 localStorage 期間禁止重繪，避免觸發多餘預覽
-    let _savedManualDatetime = null; // 使用者最後一次在「手動」模式輸入的日期，跨模式切換時不遺失
+    let _isLoading = false;
+    let _savedManualDatetime = null;
 
     function triggerPreview() {
         if (_isLoading) return;
-        if (window.onSettingsChanged) {
-            window.onSettingsChanged();
+        const ns = window.TimestampPlugin;
+        if (ns && ns.onSettingsChanged) {
+            ns.onSettingsChanged();
         }
     }
 
     // ── 儲存與讀取設定 (localStorage) ────
     function saveSettings() {
+        if (_isLoading) return; // 載入期間不覆蓋已儲存的設定
         const opts = getAll();
         const currentInputVal = document.getElementById('manualDatetime').value;
         // 只在手動模式下更新「使用者設定的日期」記憶
@@ -95,7 +99,7 @@ const Settings = (() => {
         try {
             localStorage.setItem('TimestampPluginSettings', JSON.stringify(toSave));
         } catch (e) {
-            void('[TimestampTool] 無法儲存設定:', e);
+            _getLog().warn('[TimestampTool] 無法儲存設定:', e);
         }
     }
 
@@ -163,7 +167,7 @@ const Settings = (() => {
                 }
             }
         } catch (e) {
-            void('[TimestampTool] 無法讀取設定:', e);
+            _getLog().warn('[TimestampTool] 無法讀取設定:', e);
         } finally {
             _isLoading = false;
         }
@@ -180,7 +184,6 @@ const Settings = (() => {
         if (source === 'manual') {
             input.readOnly = false;
             input.classList.remove('readonly');
-            // 還原使用者上次在手動模式中設定的日期
             if (_savedManualDatetime) input.value = _savedManualDatetime;
             if (label) label.textContent = '📅 指定日期時間';
             if (hint) hint.textContent = '套用時將使用此日期時間作為時間戳記';
@@ -213,8 +216,9 @@ const Settings = (() => {
                 btn.classList.add('active');
                 _applyTimeSourceDisplay(btn.dataset.source);
                 // 通知 main.js 模式已切換（例如切回 original 時重新填入 EXIF 日期）
-                if (window.onTimeSourceChanged) {
-                    window.onTimeSourceChanged(btn.dataset.source);
+                const ns = window.TimestampPlugin;
+                if (ns && ns.onTimeSourceChanged) {
+                    ns.onTimeSourceChanged(btn.dataset.source);
                 }
             });
         });
@@ -228,7 +232,6 @@ const Settings = (() => {
 
     // 滑桿數值顯示與字型手動輸入
     function _initSliders() {
-        // bgOpacity 和 padding 依然用 span label
         const sliderMap = {
             bgOpacity: { badge: 'bgOpacityValue', suffix: '%' },
             padding: { badge: 'paddingValue', suffix: '%' },
@@ -239,7 +242,7 @@ const Settings = (() => {
             const badge = document.getElementById(cfg.badge);
             const update = () => { if (badge) badge.textContent = slider.value + cfg.suffix; };
             slider.addEventListener('input', update);
-            update(); // 初始化顯示
+            update();
         });
 
         // 獨立處理 fontSize (slider <-> number input 同步)

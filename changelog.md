@@ -1,22 +1,34 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
-## [1.6.8] - 2026-02-23
+## [1.6.9] - 2026-02-23
 
 ### 修復 (Fixed)
-- **DevTools 自動開啟問題（7 層防護體系）**：實施全面性 DevTools 防護，徹底解決各種 Eagle 版本下 DevTools 被強制開啟的問題：
-  1. **Console 全面靜默**：覆蓋所有 `console.log/warn/error/info/debug` 方法，防止 Eagle 偵測到任何 console 輸出
-  2. **Unhandled Rejection 全面攔截**：擴大攔截範圍，不再僅限 `plugin-create` 錯誤，所有未捕獲的 Promise rejection 一律靜默
+- **DevTools 自動開啟問題（5 層防護體系）**：實施全面性 DevTools 防護，徹底解決各種 Eagle 版本下 DevTools 被強制開啟的問題：
+  1. **Console 靜默 + 可控日誌系統**：覆蓋所有 `console.*` 方法；建立 `_log` 系統，`_LOG_ENABLED` 開關一鍵切換偵錯輸出
+  2. **Unhandled Rejection 全面攔截**：所有未捕獲的 Promise rejection 一律靜默（window + process 雙層）
   3. **全域錯誤攔截**：`window.onerror` 回傳 `true`，阻止錯誤冒泡至 Eagle 的保護機制
-  4. **快捷鍵封鎖**：封鎖 F12 / Ctrl+Shift+I / Ctrl+Shift+J，防止意外或自動觸發 DevTools
-  5. **持續性 closeDevTools**：每 3 秒巡邏執行 `eagle.plugin.closeDevTools()`（共 30 秒），加上 `onPluginCreate` 完成後的三連擊（0ms / 500ms / 1500ms）
-  6. **Manifest 雙層宣告**：root 層與 `main` 物件同時設定 `devTools: false`
-  7. **外部資源移除**：移除 Google Fonts `@import`，避免網路請求失敗在 Chromium 中觸發錯誤
+  4. **快捷鍵封鎖**：封鎖 F12 / Ctrl+Shift+I / Ctrl+Shift+J
+  5. **持續性 closeDevTools**：每 5 秒巡邏（共 3 次 = 15 秒）+ `onPluginCreate` 後三連擊（0/500/1500ms）
+- **`refreshSelection` 自動重試 race condition**：新 refresh 進入時取消 pending 的 auto-retry timer，避免多重 refresh 同時執行
+- **`loadSettings` 載入期間意外覆蓋設定**：`saveSettings()` 增加 `_isLoading` 防護，載入期間不寫入 localStorage
+- **`applyTimestamps` 路徑 fallback 不一致**：`filePath` 加入 `item.fileURL` 作為 fallback，與 `filterImages()` 邏輯一致
+- **插件隱藏時 preview debounce timer 未清除**：`onPluginHide` 中清除 pending 的預覽更新
+
+### 重構 (Refactored) — 可維護性提升
+- **日誌系統重建**：`void()` → `_log.info/warn/error`，生產環境靜默、偵錯時一鍵恢復；跨檔案透過 `_getLog()` 延遲引用
+- **預覽導航抽取**：4 處重複的導航邏輯（prev/next 按鈕 + 左右方向鍵）統一為 `navigateToPreview()` 函式
+- **魔術數字命名化**：所有硬編碼數值提取為頂層常數（`EAGLE_API_TIMEOUT_MS`、`JPEG_QUALITY`、`EXIF_SCAN_BYTES` 等 12 個）
+- **統一 EXIF 日期入口**：新增 `TimestampEngine.getDateForFile(filePath)` 回傳 `{ date, hadExif }`，消除 main.js 與 settings.js 的重複 fallback 邏輯
+- **全域狀態封裝**：10+ 個散落的全域變數統一為 `State` 物件 + `resetSelection()` 清除函式
+- **loadImage 效能改善**：改為 `file://` 協議優先、base64 fallback 策略，大圖不再產生 ~33% 記憶體膨脹；MIME 對照表提取為頂層常數
+- **模組通訊命名空間化**：`window.onSettingsChanged` → `window.TimestampPlugin.onSettingsChanged`，避免全域污染
+- **DevTools 防護精簡**：巡邏改為 5 秒 × 3 次（原 3 秒 × 10 次），備份 console 只保留必要的 3 個方法
+- **`setStatus` 可讀性**：巢狀三元運算子改為明確的 if/else if/else 結構
 
 ### 變更 (Changed)
-- 所有 JS 檔案的 `console.log/warn/error` 呼叫替換為靜默的 `void()` 表達式
-- 保留 `_origConsole` 物件供開發時手動偵錯使用
-- 字體改用系統內建字體堆疊（Microsoft JhengHei / Apple System / Arial），確保完全離線可用
-- 清理 `index.html` 中被註解掉的舊版全域攔截器
+- Manifest 雙層宣告 `devTools: false`（root + main 物件）
+- 字體改用系統內建字體堆疊，確保完全離線可用
+- 移除 Google Fonts `@import`，清理 `index.html` 中的舊版全域攔截器
 
 ---
 
