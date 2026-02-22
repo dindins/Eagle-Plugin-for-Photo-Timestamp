@@ -81,18 +81,19 @@ function _loadImageBase64(filePath) {
     });
 }
 
-/** 位置座標計算 */
-function calcPos(pos, W, H, margin) {
+/** 位置座標計算（支援分離 X/Y 邊距） */
+function calcPos(pos, W, H, marginX, marginY) {
+    if (marginY === undefined) marginY = marginX; // 向後相容
     const tbl = {
-        'top-left': { x: margin, y: margin, ta: 'left', tb: 'top' },
-        'top-center': { x: W / 2, y: margin, ta: 'center', tb: 'top' },
-        'top-right': { x: W - margin, y: margin, ta: 'right', tb: 'top' },
-        'middle-left': { x: margin, y: H / 2, ta: 'left', tb: 'middle' },
+        'top-left': { x: marginX, y: marginY, ta: 'left', tb: 'top' },
+        'top-center': { x: W / 2, y: marginY, ta: 'center', tb: 'top' },
+        'top-right': { x: W - marginX, y: marginY, ta: 'right', tb: 'top' },
+        'middle-left': { x: marginX, y: H / 2, ta: 'left', tb: 'middle' },
         'center': { x: W / 2, y: H / 2, ta: 'center', tb: 'middle' },
-        'middle-right': { x: W - margin, y: H / 2, ta: 'right', tb: 'middle' },
-        'bottom-left': { x: margin, y: H - margin, ta: 'left', tb: 'bottom' },
-        'bottom-center': { x: W / 2, y: H - margin, ta: 'center', tb: 'bottom' },
-        'bottom-right': { x: W - margin, y: H - margin, ta: 'right', tb: 'bottom' },
+        'middle-right': { x: W - marginX, y: H / 2, ta: 'right', tb: 'middle' },
+        'bottom-left': { x: marginX, y: H - marginY, ta: 'left', tb: 'bottom' },
+        'bottom-center': { x: W / 2, y: H - marginY, ta: 'center', tb: 'bottom' },
+        'bottom-right': { x: W - marginX, y: H - marginY, ta: 'right', tb: 'bottom' },
     };
     return tbl[pos] || tbl['bottom-right'];
 }
@@ -159,7 +160,7 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
         textColor = '#FF9900',
         bgColor = '#000000',
         bgOpacity = 0,
-        padding = 2,
+        paddingX, paddingY, padding,
         shadow = true,
     } = opts;
 
@@ -168,10 +169,13 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-    // ── 計算等比例大小 ──
+    // ── 計算等比例大小（支援分離 X/Y 邊距，向後相容舊版 padding） ──
     const baseSize = Math.min(canvas.width, canvas.height);
     const actualFontSize = Math.max(MIN_FONT_SIZE_PX, Math.floor(baseSize * (fontSize / 100)));
-    const actualPadding = Math.floor(baseSize * (padding / 100));
+    const pxVal = paddingX ?? padding ?? 3;
+    const pyVal = paddingY ?? padding ?? 3;
+    const actualPaddingX = Math.floor(baseSize * (pxVal / 100));
+    const actualPaddingY = Math.floor(baseSize * (pyVal / 100));
 
     // ── 準備文字 ──
     const text = formatDate(date, format);
@@ -183,7 +187,7 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
     const th = actualFontSize;
     const inner = Math.max(6, actualFontSize * 0.2);
 
-    const p = calcPos(position, canvas.width, canvas.height, actualPadding);
+    const p = calcPos(position, canvas.width, canvas.height, actualPaddingX, actualPaddingY);
     ctx.textAlign = p.ta;
     ctx.textBaseline = p.tb;
 

@@ -96,12 +96,21 @@
             </div>
           </div>
 
-          <!-- 額外設定 -->
+          <!-- 水平邊距 (X) -->
           <div class="setting-group">
-            <label class="setting-label">↔ 照片邊距</label>
+            <label class="setting-label">↔ 水平邊距 (X)</label>
             <div class="slider-row">
-              <input type="range" id="padding" class="slider" min="0" max="10" value="2">
-              <span class="value-badge" id="paddingValue">2%</span>
+              <input type="range" id="paddingX" class="slider" min="0" max="10" value="3">
+              <span class="value-badge" id="paddingXValue">3%</span>
+            </div>
+          </div>
+
+          <!-- 垂直邊距 (Y) -->
+          <div class="setting-group">
+            <label class="setting-label">↕ 垂直邊距 (Y)</label>
+            <div class="slider-row">
+              <input type="range" id="paddingY" class="slider" min="0" max="10" value="3">
+              <span class="value-badge" id="paddingYValue">3%</span>
             </div>
           </div>
 
@@ -112,6 +121,14 @@
               <button class="toggle-btn active" data-shadow="on">✨ 開啟</button>
               <button class="toggle-btn" data-shadow="off">關閉</button>
             </div>
+          </div>
+
+          <!-- ⑧ 檔名後綴 -->
+          <div class="setting-group">
+            <label class="setting-label">📝 檔名後綴</label>
+            <input type="text" id="suffixInput" class="text-input"
+                   placeholder="留空自動產生日期（例：2026-02-23）" maxlength="50" />
+            <p class="hint">自訂：photo_後綴.jpg ｜ 留空：photo_2026-02-23.jpg</p>
           </div>
         </div>
 

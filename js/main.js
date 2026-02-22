@@ -456,11 +456,15 @@ async function applyTimestamps() {
 
                 const nodePath = require('path');
                 const origBase = nodePath.basename(filePath, nodePath.extname(filePath));
-                const newName = `${origBase}(時間戳記)`;
+
+                // 取得後綴：優先使用者自訂，否則自動產生日期
+                const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
+                    .replace(/[\/\\:*?"<>|]/g, '_');
+                const newName = `${origBase}_${fileSuffix}`;
 
                 await eagle.item.addFromPath(tmpPath, {
                     name: newName,
-                    annotation: `[時間戳記] 原始檔案：${nodePath.basename(filePath)}`,
+                    annotation: `[時間戳記:${fileSuffix}] 原始檔案：${nodePath.basename(filePath)}`,
                     tags: item.tags || [],
                     folders: item.folders || [],
                 });

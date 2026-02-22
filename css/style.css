@@ -265,6 +265,29 @@ body {
   border-color: var(--accent);
 }
 
+/* ── 文字輸入框（檔名後綴等） ── */
+.text-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.text-input:focus {
+  border-color: var(--accent);
+}
+
+.text-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
 .hint {
   font-size: 11px;
   color: var(--text-secondary);
@@ -565,7 +588,8 @@ body {
 
 .select-input:focus-visible,
 .datetime-input:focus-visible,
-.number-input:focus-visible {
+.number-input:focus-visible,
+.text-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }

@@ -1,6 +1,11 @@
-# Skill: 設定面板開發模式
+---
+name: settings-patterns
+description: This skill should be used when the user asks to "add a new setting", "create a new slider", "add text input", "modify settings logic", "add toggle button", or needs guidance on settings.js patterns, localStorage persistence, or UI control wiring in the Eagle Timestamp Plugin.
+---
 
-當需要在 `settings.js` 新增設定項目、或修改設定邏輯時使用。
+# 設定面板開發模式
+
+在 `settings.js` 新增設定項目或修改設定邏輯時使用。
 
 ---
 
@@ -8,11 +13,9 @@
 
 ```js
 const Settings = (() => {
-    // 私有狀態
     let _isLoading = false;
     let _savedManualDatetime = null;
 
-    // 公開 API
     function init() { ... }
     function getAll(filePath?) { ... }
     function getDate(filePath?) { ... }
@@ -25,11 +28,12 @@ window.Settings = Settings;
 
 ---
 
-## 新增一個設定項目的完整步驟
+## 新增設定項目的完整步驟
 
 ### 1. `index.html`：加入 UI 元件
+
 ```html
-<!-- 使用 toggle-btn 型態 -->
+<!-- toggle-btn 型態 -->
 <div class="setting-group">
   <label class="setting-label">🆕 新設定</label>
   <div class="toggle-group" id="newToggle">
@@ -38,7 +42,7 @@ window.Settings = Settings;
   </div>
 </div>
 
-<!-- 或使用 slider 型態 -->
+<!-- slider 型態 -->
 <div class="setting-group">
   <label class="setting-label">🆕 新滑竿</label>
   <div class="slider-row">
@@ -46,22 +50,35 @@ window.Settings = Settings;
     <span class="value-badge" id="newSliderValue">5</span>
   </div>
 </div>
+
+<!-- text-input 型態（v1.7.0 新增） -->
+<div class="setting-group">
+  <label class="setting-label">📝 新文字欄</label>
+  <input type="text" id="newText" class="text-input"
+         placeholder="提示文字" maxlength="50" />
+  <p class="hint">說明文字</p>
+</div>
 ```
 
 ### 2. `settings.js`：`getAll()` 加入讀取
+
 ```js
 function getAll(filePath = null) {
     return {
-        // ... 現有項目
+        // toggle-btn:
         newSetting: document.querySelector('.toggle-btn.active[data-xxx]')?.dataset.xxx || 'a',
-        // 或 slider:
+        // slider:
         newSlider: parseInt(document.getElementById('newSlider').value, 10),
+        // text-input:
+        newText: (document.getElementById('newText')?.value || '').trim(),
     };
 }
 ```
 
-### 3. `settings.js`：加入 `_initNewToggle()` 函式
+### 3. `settings.js`：初始化（toggle 需 init 函式，slider 加入 sliderMap）
+
 ```js
+// toggle 型態：新增 _initNewToggle() 並在 init() 中呼叫
 function _initNewToggle() {
     const btns = document.querySelectorAll('.toggle-btn[data-xxx]');
     btns.forEach(btn => {
@@ -71,104 +88,102 @@ function _initNewToggle() {
         });
     });
 }
+
+// slider 型態：加入 _initSliders() 的 sliderMap
+const sliderMap = {
+    newSlider: { badge: 'newSliderValue', suffix: '' },
+};
+
+// text-input 型態：無需額外 init，已被 init() 的 querySelectorAll('input') 涵蓋
 ```
 
-### 4. `settings.js`：在 `init()` 中呼叫
-```js
-function init() {
-    _initTimeSourceToggle();
-    _initSliders();
-    _initPositionToggle();
-    _initShadowToggle();
-    _initNewToggle(); // ← 新增
-    loadSettings();
-    // ... 事件監聽（.toggle-btn 已涵蓋新按鈕）
-}
-```
+### 4. `settings.js`：`loadSettings()` 還原邏輯
 
-### 5. `settings.js`：`loadSettings()` 加入還原邏輯
 ```js
-// toggle-btn 型態
+// toggle-btn
 if (opts.newSetting) {
     const btn = document.querySelector(`.toggle-btn[data-xxx="${opts.newSetting}"]`);
     if (btn) btn.click();
 }
 
-// slider 型態（elementMap 中加入）
+// slider（elementMap 中加入）
 const elementMap = {
-    // ...
     newSlider: opts.newSlider,
 };
+
+// text-input（直接還原 value）
+if (opts.newText !== undefined) {
+    const el = document.getElementById('newText');
+    if (el) el.value = opts.newText;
+}
 ```
 
-### 6. `timestamp.js`（若影響繪製）：`drawTimestampToContext()` 加入解構
+### 5. `timestamp.js`（若影響繪製）：`drawTimestampToContext()` 解構
+
 ```js
-const {
-    // ... 現有
-    newSetting = 'a', // 加預設值
-} = opts;
+const { newSetting = 'a', ... } = opts;
 ```
 
 ---
 
-## `_isLoading` 旗標的用途
+## localStorage 遷移模式（v1.7.0 範例）
 
-在 `loadSettings()` 執行期間，`btn.click()` 會觸發所有 click 監聽器。
-`_isLoading = true` 確保 `triggerPreview()` 在這段期間不執行（避免無圖可預覽時就觸發繪製）。
+重命名或拆分設定 key 時，在 `loadSettings()` 的 `JSON.parse` 之後立即處理：
+
+```js
+// 舊版 padding → 新版 paddingX/paddingY
+if (opts.padding !== undefined && opts.paddingX === undefined) {
+    opts.paddingX = opts.padding;
+    opts.paddingY = opts.padding;
+}
+```
+
+用 `!== undefined` 確保 `0` 也能正確遷移。
+
+---
+
+## `_isLoading` 旗標
+
+`loadSettings()` 期間 `btn.click()` 會觸發監聯器。`_isLoading = true` 阻止 `triggerPreview()` 執行。
 
 ```js
 function loadSettings() {
     _isLoading = true;
-    try {
-        // ... 還原設定
-    } finally {
-        _isLoading = false; // 必須在 finally 中解除
-    }
+    try { /* ... */ }
+    finally { _isLoading = false; }
 }
 
 function triggerPreview() {
-    if (_isLoading) return; // 核心防護
-    if (window.onSettingsChanged) window.onSettingsChanged();
+    if (_isLoading) return;
+    // ...
 }
 ```
 
 ---
 
-## 跨模組通信模式
+## 跨模組通信
 
 ```js
-// settings.js 觸發 main.js 的預覽更新
-window.onSettingsChanged = updatePreview; // main.js 中設定
+// settings.js → main.js 預覽更新
+window.TimestampPlugin.onSettingsChanged = updatePreview;
 
-// settings.js 通知 main.js 模式切換
-window.onTimeSourceChanged = (source) => { ... }; // main.js 中設定
-
-// 在 settings.js 中呼叫
-if (window.onTimeSourceChanged) {
-    window.onTimeSourceChanged(btn.dataset.source);
-}
+// settings.js → main.js 模式切換
+window.TimestampPlugin.onTimeSourceChanged = (source) => { ... };
 ```
 
 ---
 
-## 現有 toggle 選取器對照
+## 現有控制項對照
 
-| 設定項目 | data-* 屬性 | 讀取選取器 |
-|---------|------------|----------|
-| 時間來源 | `data-source` | `.toggle-btn.active[data-source]` |
-| 位置 | `data-pos` | `.toggle-btn.active[data-pos]` |
-| 陰影 | `data-shadow` | `.toggle-btn.active[data-shadow]` |
-
----
-
-## `saveSettings()` 的特殊處理
-
-手動日期有獨立的記憶機制，不走一般流程：
-```js
-// ✅ 只在 manual 模式時更新記憶
-if (getTimeSource() === 'manual') {
-    _savedManualDatetime = currentInputVal;
-}
-// ✅ 儲存時優先用記憶值，避免存入 EXIF / now 的顯示值
-manualDatetime: _savedManualDatetime || currentInputVal,
-```
+| 設定項目 | 型態 | ID / data-* | 讀取方式 |
+|---------|------|------------|---------|
+| 時間來源 | toggle-btn | `data-source` | `.toggle-btn.active[data-source]` |
+| 位置 | toggle-btn | `data-pos` | `.toggle-btn.active[data-pos]` |
+| 陰影 | toggle-btn | `data-shadow` | `.toggle-btn.active[data-shadow]` |
+| 字型大小 | slider + number | `fontSize` / `fontSizeInput` | `parseInt(el.value, 10)` |
+| 背景透明度 | slider | `bgOpacity` | `parseInt(el.value, 10)` |
+| 水平邊距 | slider | `paddingX` | `parseInt(el.value, 10)` |
+| 垂直邊距 | slider | `paddingY` | `parseInt(el.value, 10)` |
+| 檔名後綴 | text-input | `suffixInput` | `(el.value \|\| '').trim()` |
+| 文字顏色 | color | `textColor` | `el.value` |
+| 背景顏色 | color | `bgColor` | `el.value` |

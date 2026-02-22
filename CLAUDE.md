@@ -24,6 +24,19 @@ Eagle 4 Window Plugin，為照片燒入視覺化時間戳記。Chromium 107 + No
 └── prompt_for_next_session.md  AI handoff guide
 ```
 
+## v1.7.0 Key Patterns
+
+### Separate X/Y Padding
+- `calcPos(pos, W, H, marginX, marginY)` — 5 params, marginY fallback to marginX
+- `drawTimestampToContext()` uses `??` chain: `paddingX ?? padding ?? 3`
+- Settings: `paddingX`/`paddingY` sliders (default 3%), old `padding` auto-migrates in `loadSettings()`
+
+### Custom Filename Suffix
+- `suffixInput` text field → `getAll().suffix` (trimmed)
+- Empty → auto-generate `YYYY-MM-DD` via `TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD')`
+- Sanitized: `.replace(/[\/\\:*?"<>|]/g, '_')`
+- Output: `origName_suffix.ext`, annotation `[時間戳記:suffix]`
+
 ## Critical Rules
 
 ### Eagle API Constraints
@@ -54,6 +67,9 @@ Every version change MUST sync 3 files:
 - `fetchPromise.catch(() => {})`: attach immediately after Promise.race creation
 - Canvas shadow: reset in `finally` block
 - `ctx.setTransform(1,0,0,1,0,0)` at start of drawTimestampToContext()
+- `loadSettings()` migration: check `opts.padding !== undefined && opts.paddingX === undefined`
+- `calcPos()` backward compat: `if (marginY === undefined) marginY = marginX`
+- Suffix sanitization: must strip `\/\\:*?"<>|` before use in filename
 
 ### Skills (in .claude/skills/)
 | Skill | When to Use |

@@ -25,7 +25,9 @@ const Settings = (() => {
             textColor: document.getElementById('textColor').value,
             bgColor: document.getElementById('bgColor').value,
             bgOpacity: parseInt(document.getElementById('bgOpacity').value, 10),
-            padding: parseInt(document.getElementById('padding').value, 10),
+            paddingX: parseInt(document.getElementById('paddingX').value, 10),
+            paddingY: parseInt(document.getElementById('paddingY').value, 10),
+            suffix: (document.getElementById('suffixInput')?.value || '').trim(),
             shadow: document.querySelector('.toggle-btn.active[data-shadow]')?.dataset.shadow !== 'off',
         };
     }
@@ -110,6 +112,12 @@ const Settings = (() => {
             if (!saved) return;
             const opts = JSON.parse(saved);
 
+            // 舊版 padding → 新版 paddingX/paddingY 遷移
+            if (opts.padding !== undefined && opts.paddingX === undefined) {
+                opts.paddingX = opts.padding;
+                opts.paddingY = opts.padding;
+            }
+
             // 先還原手動日期記憶，_applyTimeSourceDisplay('manual') 會用到它
             if (opts.manualDatetime) {
                 _savedManualDatetime = opts.manualDatetime;
@@ -148,13 +156,20 @@ const Settings = (() => {
                 if (btn) btn.click();
             }
 
+            // 還原檔名後綴
+            if (opts.suffix !== undefined) {
+                const suffixEl = document.getElementById('suffixInput');
+                if (suffixEl) suffixEl.value = opts.suffix;
+            }
+
             // 還原其它設定
             const elementMap = {
                 fontSize: opts.fontSize,
                 textColor: opts.textColor,
                 bgColor: opts.bgColor,
                 bgOpacity: opts.bgOpacity,
-                padding: opts.padding
+                paddingX: opts.paddingX,
+                paddingY: opts.paddingY,
             };
 
             for (const [id, val] of Object.entries(elementMap)) {
@@ -234,7 +249,8 @@ const Settings = (() => {
     function _initSliders() {
         const sliderMap = {
             bgOpacity: { badge: 'bgOpacityValue', suffix: '%' },
-            padding: { badge: 'paddingValue', suffix: '%' },
+            paddingX: { badge: 'paddingXValue', suffix: '%' },
+            paddingY: { badge: 'paddingYValue', suffix: '%' },
         };
 
         Object.entries(sliderMap).forEach(([id, cfg]) => {
