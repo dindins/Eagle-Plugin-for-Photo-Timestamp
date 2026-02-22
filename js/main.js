@@ -12,39 +12,45 @@
 //  DevTools 防護層（必須最早載入）
 //  Eagle 某些版本會在偵測到 console 輸出或未捕獲錯誤時強制開啟 DevTools，
 //  即使 manifest.json 設定 devTools: false 也無效。
-//  策略：(1) 全面靜默 console (2) 攔截所有未捕獲錯誤 (3) 持續關閉 DevTools
+//  策略：(1) 靜默 console + 可控日誌 (2) 攔截未捕獲錯誤 (3) 持續關閉 DevTools
 // ══════════════════════════════════════════
 
-// [防護 1] 靜默 console — 生產環境下覆蓋所有 console 方法，防止 Eagle 偵測到輸出
+// [防護 1] 備份原始 console + 建立可控日誌系統
 const _noop = () => {};
 const _origConsole = {
     log: console.log.bind(console),
     warn: console.warn.bind(console),
     error: console.error.bind(console),
-    info: console.info.bind(console),
-    debug: console.debug.bind(console),
 };
+
+// 生產環境 false，偵錯時改 true 即可恢復日誌輸出
+const _LOG_ENABLED = false;
+const _log = {
+    info: _LOG_ENABLED ? _origConsole.log : _noop,
+    warn: _LOG_ENABLED ? _origConsole.warn : _noop,
+    error: _LOG_ENABLED ? _origConsole.error : _noop,
+};
+window._log = _log;
+
+// 靜默 console，防止 Eagle 偵測到輸出
 console.log = _noop;
 console.warn = _noop;
 console.error = _noop;
 console.info = _noop;
 console.debug = _noop;
 
-// [防護 2] 攔截所有未捕獲的 rejection（不限 plugin-create）
-window.addEventListener('unhandledrejection', (event) => {
-    event.preventDefault();
-});
-// Node.js / Electron process 層攔截
+// [防護 2] 攔截所有未捕獲的 rejection
+window.addEventListener('unhandledrejection', (event) => { event.preventDefault(); });
 try {
     if (typeof process !== 'undefined' && typeof process.on === 'function') {
-        process.on('unhandledRejection', () => { /* 全面靜默 */ });
+        process.on('unhandledRejection', () => {});
     }
 } catch (_) { }
 
-// [防護 3] 攔截全域錯誤，阻止 Eagle 因偵測到錯誤而開啟 DevTools
+// [防護 3] 攔截全域錯誤
 window.onerror = () => true;
 
-// [防護 4] 封鎖 F12 / Ctrl+Shift+I 等快捷鍵，防止意外開啟 DevTools
+// [防護 4] 封鎖 F12 / Ctrl+Shift+I 等快捷鍵
 document.addEventListener('keydown', (e) => {
     if (e.key === 'F12' ||
         (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) ||
@@ -54,9 +60,11 @@ document.addEventListener('keydown', (e) => {
     }
 }, true);
 
-// [防護 5] 持續關閉 DevTools（每 3 秒檢查一次，共 30 秒）
+// [防護 5] 持續關閉 DevTools（每 5 秒檢查，共 3 次）
+const DEVTOOLS_GUARD_INTERVAL_MS = 5000;
+const DEVTOOLS_GUARD_MAX_CHECKS = 3;
 let _devToolsGuardCount = 0;
-const _devToolsGuardMax = 10;
+
 function _forceCloseDevTools() {
     try {
         if (eagle && eagle.plugin && typeof eagle.plugin.closeDevTools === 'function') {
@@ -64,13 +72,44 @@ function _forceCloseDevTools() {
         }
     } catch (_) { }
 }
+
 const _devToolsGuardTimer = setInterval(() => {
     _forceCloseDevTools();
     _devToolsGuardCount++;
-    if (_devToolsGuardCount >= _devToolsGuardMax) clearInterval(_devToolsGuardTimer);
-}, 3000);
+    if (_devToolsGuardCount >= DEVTOOLS_GUARD_MAX_CHECKS) clearInterval(_devToolsGuardTimer);
+}, DEVTOOLS_GUARD_INTERVAL_MS);
 
+// ── 常數定義 ─────────────────────────────
 const SUPPORTED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
+const EAGLE_API_TIMEOUT_MS = 2000;
+const EAGLE_API_MAX_RETRIES = 10;
+const EAGLE_API_RETRY_DELAY_MS = 50;
+const AUTO_RETRY_DELAY_MS = 3000;
+const PREVIEW_DEBOUNCE_MS = 150;
+const FIRST_SHOW_DELAY_MS = 1000;
+const FILE_NAME_MAX_LENGTH = 20;
+
+// ── 自動重試計時器（供 refreshSelection 取消用） ──
+let _autoRetryTimer = null;
+
+// ── 全域狀態封裝 ─────────────────────────
+const State = {
+    images: [],           // 當前選取的圖片路徑列表
+    items: [],            // 當前選取的 Eagle item 物件列表
+    previewIndex: 0,      // 預覽中的圖片索引
+    pluginCreated: false,
+    refreshing: false,
+    applying: false,
+    cancelled: false,
+    hadExif: false,       // 當前選取的第一張圖是否有 EXIF
+    autoRetryScheduled: false,
+    firstShowDone: false,
+    startupItems: null,   // onItemSelectionChanged 快取
+    pluginRunArgs: null,
+};
+
+// ── 模組通訊命名空間 ─────────────────────
+window.TimestampPlugin = window.TimestampPlugin || {};
 
 // ── UI 工具 ────────────────────────────────
 function showLoading(txt, prog) {
@@ -78,18 +117,28 @@ function showLoading(txt, prog) {
     document.getElementById('loadingText').textContent = txt || '處理中...';
     document.getElementById('loadingProgress').textContent = prog || '';
 }
+
 function updateProgress(i, n) {
     document.getElementById('loadingProgress').textContent = `${i} / ${n}`;
 }
+
 function hideLoading() {
     document.getElementById('loadingOverlay').classList.remove('visible');
 }
+
 function setStatus(txt, ok) {
     const el = document.getElementById('infoText');
     if (!el) return;
     el.textContent = txt;
-    el.className = ok === true ? 'status-success' : ok === false ? 'status-error' : '';
+    if (ok === true) {
+        el.className = 'status-success';
+    } else if (ok === false) {
+        el.className = 'status-error';
+    } else {
+        el.className = '';
+    }
 }
+
 function setApplyBtn(enabled, label) {
     const btn = document.getElementById('applyBtn');
     if (!btn) return;
@@ -97,9 +146,8 @@ function setApplyBtn(enabled, label) {
     document.getElementById('applyBtnText').textContent = label || '套用時間戳記';
 }
 
-// 在 UI 上顯示錯誤（比只有 console 更好診斷）
 function showError(msg) {
-    void('[TimestampTool]', msg);
+    _log.error('[TimestampTool]', msg);
     setStatus('❌ ' + msg, false);
     hideLoading();
     setApplyBtn(false, '套用時間戳記');
@@ -108,210 +156,55 @@ function showError(msg) {
 // ── 篩選圖片 ──────────────────────────────
 function filterImages(items) {
     if (!Array.isArray(items)) {
-        void('[TimestampTool] items 不是陣列:', items);
+        _log.warn('[TimestampTool] items 不是陣列:', items);
         return [];
     }
     return items.filter(item => {
         if (!item) return false;
-
-        // filePath 是唯讀 getter，只能讀取不能寫入
         const fp = item.filePath || item.fileURL || '';
         if (!fp) return false;
-
         const lastDot = fp.lastIndexOf('.');
-        if (lastDot === -1) return false; // 無副檔名，跳過
+        if (lastDot === -1) return false;
         const ext = fp.toLowerCase().slice(lastDot);
         return SUPPORTED_EXT.has(ext);
     });
 }
 
-// ── 儲存當前第一張圖的 EXIF 狀態給套用時備註用 ──
-let currentSelectionHadExif = false;
-
-// ── 多圖預覽狀態 ──
-let currentSelectedImages = [];
-let globalEagleItems = [];
-let currentPreviewIndex = 0;
-window._pluginRunArgs = null;
-window._startupItems = null;
-
-let isPluginCreated = false;
-let isRefreshing = false;
-let isApplying = false;
-let applyCancelled = false;
-let _autoRetryOnTimeout = false; // 防止多次排程自動重試計時器
-let _firstShowHandled = false;  // 首次 onPluginShow/onPluginRun 需要延遲等待 Eagle API 就緒
-
-// ── 刷新選取資訊 ──────────────────────────
-async function refreshSelection(passedItems = null) {
-    if (isApplying) return; // 套用中禁止重刷 UI
-    if (isRefreshing) return;
-    isRefreshing = true;
-    try {
-        let all;
-        if (passedItems && Array.isArray(passedItems)) {
-            all = passedItems;
-        } else if (window._startupItems && window._startupItems.length > 0) {
-            all = window._startupItems;
-            window._startupItems = null; // 使用後清除，確保下次重整時重新向 Eagle 取得最新選取
-            void('[TimestampTool] 成功從 onItemSelectionChanged 快取中取得照片清單！');
-        } else {
-            setStatus('向 Eagle 請求選取清單...', true);
-
-            for (let initRetry = 0; initRetry < 10; initRetry++) {
-                // timeoutId 宣告在 try-catch 之外，確保 catch 區塊可以清除 timer
-                let timeoutId = null;
-                try {
-                    // 加入終極防死鎖機制 (Timeout 2秒)
-                    // 關鍵修正：立刻附上空 .catch()，防止 race 超時後 fetchPromise
-                    // 稍後才 reject 時，因無人監聽而產生 Uncaught (in promise)
-                    const fetchPromise = eagle.item.getSelected();
-                    fetchPromise.catch(() => {});
-
-                    // 記錄 timeoutId，確保成功或失敗時都能清除，避免 timer 洩漏
-                    const timeoutPromise = new Promise((_, reject) => {
-                        timeoutId = setTimeout(() => reject(new Error('EAGLE_API_TIMEOUT')), 2000);
-                    });
-
-                    all = await Promise.race([fetchPromise, timeoutPromise]);
-                    clearTimeout(timeoutId); // 成功時清除逾時 timer
-                    break; // 成功就跳出迴圈
-                } catch (apiErr) {
-                    clearTimeout(timeoutId); // 失敗時（含 retry）也清除，避免 timer 洩漏
-                    if (apiErr && apiErr.message && apiErr.message.includes('plugin-create')) {
-                        void(`[TimestampTool] Eagle API 尚未初始化，等待中... (${initRetry + 1}/10)`);
-                        setStatus(`API 暖機中... (${initRetry + 1}/10)`, true);
-                        await new Promise(r => setTimeout(r, 50));
-                    } else if (apiErr && apiErr.message === 'EAGLE_API_TIMEOUT') {
-                        void('[TimestampTool] getSelected 逾時未回應，強制打斷以保護 UI。');
-                        isRefreshing = false;
-                        if (!_autoRetryOnTimeout) {
-                            // 第一次逾時：靜默等待 Eagle API 初始化，3 秒後自動重試
-                            _autoRetryOnTimeout = true;
-                            setStatus('Eagle API 初始化中，稍後自動重試...', false);
-                            setTimeout(() => {
-                                _autoRetryOnTimeout = false;
-                                if (!isApplying && !isRefreshing) {
-                                    refreshSelection().catch(e => void('[TimestampTool] 自動重試失敗:', e));
-                                }
-                            }, 3000);
-                        } else {
-                            // 第二次逾時：才提示使用者手動操作
-                            setStatus('請重新點選 Eagle 主視窗裡的照片，外掛會自動捕捉！', false);
-                        }
-                        return;
-                    } else {
-                        setStatus(`API 崩潰: ${String(apiErr)}`, false);
-                        void(apiErr);
-                        isRefreshing = false;
-                        return; // 遇到未知的 API 錯誤直接停止重試並顯示
-                    }
-                }
-            }
-        }
-
-        if (!all) {
-            all = [];
-        }
-
-        const imgs = filterImages(all);
-
-        if (!all || all.length === 0) {
-            setStatus('等待載入照片... (請點擊右邊按鈕)', false);
-            setApplyBtn(false);
-            currentSelectedImages = [];
-            globalEagleItems = [];
-            currentPreviewIndex = 0;
-            updatePreviewControls();
-            clearPreview();
-        } else if (imgs.length === 0) {
-            let sample = '';
-            try {
-                sample = JSON.stringify(all[0]).substring(0, 150);
-            } catch (e) { }
-            setStatus(`總共抓了 ${all.length} 張，過濾後變 0 張。第一張長相: ${sample}`, false);
-            setApplyBtn(false);
-            currentSelectedImages = [];
-            globalEagleItems = [];
-            currentPreviewIndex = 0;
-            updatePreviewControls();
-            clearPreview();
-        } else {
-            const skip = all.length - imgs.length;
-            setStatus(skip > 0
-                ? `已選 ${imgs.length} 張（略過 ${skip} 個）`
-                : `已選 ${imgs.length} 張，可套用`);
-            setApplyBtn(true, `套用至 ${imgs.length} 張照片`);
-
-            currentSelectedImages = imgs.map(img => img.filePath || img.fileURL);
-            globalEagleItems = imgs;
-            currentPreviewIndex = 0;
-            updatePreviewControls();
-
-            const firstImgPath = currentSelectedImages[0];
-            if (firstImgPath) {
-                // 自動帶入時間：僅「原始照片時間」模式才讀取 EXIF
-                // 「手動」模式保留使用者輸入，「當前時間」模式保留 now 顯示值
-                try {
-                    if (Settings.getTimeSource() === 'original') {
-                        autoFillDate(firstImgPath);
-                    }
-                } catch (err) {
-                    void('[TimestampTool] autoFillDate 失敗:', err);
-                }
-                // 更新預覽
-                try {
-                    updatePreview();
-                } catch (err) {
-                    void('[TimestampTool] trigger updatePreview 失敗:', err);
-                }
-            }
-        }
-    } catch (e) {
-        void('[TimestampTool] refreshSelection 遭攔截錯誤:', e);
-        setStatus('初始化載入失敗: ' + e.message, false);
-        setApplyBtn(false);
-        currentSelectedImages = [];
-        currentPreviewIndex = 0;
-        updatePreviewControls();
-        clearPreview();
-    } finally {
-        isRefreshing = false;
-    }
-}
-
+// ── 自動填入日期（使用統一入口） ─────────
 function autoFillDate(filePath) {
     try {
-
-        let targetDate = TimestampEngine.readExifDate(filePath);
-        currentSelectionHadExif = !!targetDate;
-
-        if (!targetDate) {
-            try {
-                const fs = require('fs');
-                targetDate = fs.statSync(filePath).birthtime;
-            } catch (e) {
-                targetDate = new Date();
-            }
-        }
+        const { date, hadExif } = TimestampEngine.getDateForFile(filePath);
+        State.hadExif = hadExif;
 
         // 轉換為 YYYY-MM-DDTHH:mm 格式放入 datetime-local
-        const localStr = new Date(targetDate.getTime() - targetDate.getTimezoneOffset() * 60000)
+        const localStr = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
             .toISOString().slice(0, 16);
 
         document.getElementById('manualDatetime').value = localStr;
 
-        // 更新 EXIF 來源標籤，讓使用者知道日期從哪裡來
+        // 更新 EXIF 來源標籤
         const badge = document.getElementById('exifSourceBadge');
         if (badge) {
-            badge.textContent = currentSelectionHadExif ? '📸 EXIF' : '📁 建立時間';
-            badge.className = 'exif-source-badge ' + (currentSelectionHadExif ? 'exif-badge-exif' : 'exif-badge-file');
+            badge.textContent = hadExif ? '📸 EXIF' : '📁 建立時間';
+            badge.className = 'exif-source-badge ' + (hadExif ? 'exif-badge-exif' : 'exif-badge-file');
         }
     } catch (e) {
-        void('[TimestampTool] autoFillDate error:', e);
+        _log.warn('[TimestampTool] autoFillDate error:', e);
     }
 }
 
+// ── 預覽導航（消除重複邏輯） ─────────────
+function navigateToPreview(newIndex) {
+    State.previewIndex = newIndex;
+    updatePreviewControls();
+    // 僅「原始照片時間」模式才讀取 EXIF，不干擾手動或當前時間模式
+    if (Settings.getTimeSource() === 'original') {
+        autoFillDate(State.images[State.previewIndex]);
+    }
+    updatePreview();
+}
+
+// ── 清除預覽 ──────────────────────────────
 function clearPreview() {
     const canvas = document.getElementById('previewCanvas');
     if (!canvas) return;
@@ -332,8 +225,9 @@ function clearPreview() {
     ctx.fillText('選取後將自動顯示預覽', canvas.width / 2, canvas.height / 2 + 16);
 }
 
+// ── 更新預覽控制列 ────────────────────────
 function updatePreviewControls() {
-    const total = currentSelectedImages.length;
+    const total = State.images.length;
     const pageInd = document.getElementById('previewPage');
     const prevBtn = document.getElementById('prevBtn');
     const nextBtn = document.getElementById('nextBtn');
@@ -343,23 +237,25 @@ function updatePreviewControls() {
         if (prevBtn) prevBtn.disabled = true;
         if (nextBtn) nextBtn.disabled = true;
     } else {
-        if (pageInd) pageInd.textContent = `${currentPreviewIndex + 1} / ${total}`;
-        if (prevBtn) prevBtn.disabled = currentPreviewIndex <= 0;
-        if (nextBtn) nextBtn.disabled = currentPreviewIndex >= total - 1;
+        if (pageInd) pageInd.textContent = `${State.previewIndex + 1} / ${total}`;
+        if (prevBtn) prevBtn.disabled = State.previewIndex <= 0;
+        if (nextBtn) nextBtn.disabled = State.previewIndex >= total - 1;
     }
 }
 
+// ── 更新預覽畫面（防抖） ─────────────────
 let previewTimeout = null;
+
 function updatePreview() {
     clearTimeout(previewTimeout);
     previewTimeout = setTimeout(async () => {
-        if (currentSelectedImages.length === 0) return;
-        const currentPreviewPath = currentSelectedImages[currentPreviewIndex];
+        if (State.images.length === 0) return;
+        const currentPreviewPath = State.images[State.previewIndex];
         if (!currentPreviewPath) return;
 
         const canvas = document.getElementById('previewCanvas');
         if (!canvas) {
-            void('[TimestampTool] 找不到 previewCanvas');
+            _log.warn('[TimestampTool] 找不到 previewCanvas');
             return;
         }
 
@@ -367,42 +263,174 @@ function updatePreview() {
             const opts = Settings.getAll(currentPreviewPath);
             await TimestampEngine.renderPreview(currentPreviewPath, opts, canvas);
         } catch (e) {
-            void('[TimestampTool] 預覽繪製失敗:', e);
+            _log.warn('[TimestampTool] 預覽繪製失敗:', e);
             showError(`預覽載入失敗: ${e.message}`);
         }
-    }, 150);
+    }, PREVIEW_DEBOUNCE_MS);
 }
 
-// 暴露給 settings.js 的觸發介面
-window.onSettingsChanged = updatePreview;
+// 暴露給 settings.js 的觸發介面（透過命名空間）
+window.TimestampPlugin.onSettingsChanged = updatePreview;
 
 // 時間來源模式切換時觸發（供切換回 original 模式時重新填入 EXIF 日期）
-window.onTimeSourceChanged = (source) => {
-    if (source === 'original' && currentSelectedImages.length > 0) {
-        autoFillDate(currentSelectedImages[currentPreviewIndex]);
+window.TimestampPlugin.onTimeSourceChanged = (source) => {
+    if (source === 'original' && State.images.length > 0) {
+        autoFillDate(State.images[State.previewIndex]);
     }
 };
 
+// ── 重設選取狀態為空 ─────────────────────
+function resetSelection() {
+    State.images = [];
+    State.items = [];
+    State.previewIndex = 0;
+    updatePreviewControls();
+    clearPreview();
+}
+
+// ── 刷新選取資訊 ──────────────────────────
+async function refreshSelection(passedItems = null) {
+    if (State.applying) return;
+    if (State.refreshing) return;
+    // 取消任何 pending 的自動重試，避免 race condition
+    if (_autoRetryTimer) {
+        clearTimeout(_autoRetryTimer);
+        _autoRetryTimer = null;
+        State.autoRetryScheduled = false;
+    }
+    State.refreshing = true;
+    try {
+        let all;
+        if (passedItems && Array.isArray(passedItems)) {
+            all = passedItems;
+        } else if (State.startupItems && State.startupItems.length > 0) {
+            all = State.startupItems;
+            State.startupItems = null;
+            _log.info('[TimestampTool] 成功從 onItemSelectionChanged 快取中取得照片清單！');
+        } else {
+            setStatus('向 Eagle 請求選取清單...', true);
+
+            for (let initRetry = 0; initRetry < EAGLE_API_MAX_RETRIES; initRetry++) {
+                let timeoutId = null;
+                try {
+                    const fetchPromise = eagle.item.getSelected();
+                    fetchPromise.catch(() => {});
+
+                    const timeoutPromise = new Promise((_, reject) => {
+                        timeoutId = setTimeout(() => reject(new Error('EAGLE_API_TIMEOUT')), EAGLE_API_TIMEOUT_MS);
+                    });
+
+                    all = await Promise.race([fetchPromise, timeoutPromise]);
+                    clearTimeout(timeoutId);
+                    break;
+                } catch (apiErr) {
+                    clearTimeout(timeoutId);
+                    if (apiErr && apiErr.message && apiErr.message.includes('plugin-create')) {
+                        _log.info(`[TimestampTool] Eagle API 尚未初始化，等待中... (${initRetry + 1}/${EAGLE_API_MAX_RETRIES})`);
+                        setStatus(`API 暖機中... (${initRetry + 1}/${EAGLE_API_MAX_RETRIES})`, true);
+                        await new Promise(r => setTimeout(r, EAGLE_API_RETRY_DELAY_MS));
+                    } else if (apiErr && apiErr.message === 'EAGLE_API_TIMEOUT') {
+                        _log.warn('[TimestampTool] getSelected 逾時未回應，強制打斷以保護 UI。');
+                        State.refreshing = false;
+                        if (!State.autoRetryScheduled) {
+                            State.autoRetryScheduled = true;
+                            setStatus('Eagle API 初始化中，稍後自動重試...', false);
+                            _autoRetryTimer = setTimeout(() => {
+                                _autoRetryTimer = null;
+                                State.autoRetryScheduled = false;
+                                if (!State.applying && !State.refreshing) {
+                                    refreshSelection().catch(e => _log.warn('[TimestampTool] 自動重試失敗:', e));
+                                }
+                            }, AUTO_RETRY_DELAY_MS);
+                        } else {
+                            setStatus('請重新點選 Eagle 主視窗裡的照片，外掛會自動捕捉！', false);
+                        }
+                        return;
+                    } else {
+                        setStatus(`API 崩潰: ${String(apiErr)}`, false);
+                        _log.error(apiErr);
+                        State.refreshing = false;
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (!all) {
+            all = [];
+        }
+
+        const imgs = filterImages(all);
+
+        if (!all || all.length === 0) {
+            setStatus('等待載入照片... (請點擊右邊按鈕)', false);
+            setApplyBtn(false);
+            resetSelection();
+        } else if (imgs.length === 0) {
+            let sample = '';
+            try {
+                sample = JSON.stringify(all[0]).substring(0, 150);
+            } catch (_) { }
+            setStatus(`總共抓了 ${all.length} 張，過濾後變 0 張。第一張長相: ${sample}`, false);
+            setApplyBtn(false);
+            resetSelection();
+        } else {
+            const skip = all.length - imgs.length;
+            setStatus(skip > 0
+                ? `已選 ${imgs.length} 張（略過 ${skip} 個）`
+                : `已選 ${imgs.length} 張，可套用`);
+            setApplyBtn(true, `套用至 ${imgs.length} 張照片`);
+
+            State.images = imgs.map(img => img.filePath || img.fileURL);
+            State.items = imgs;
+            State.previewIndex = 0;
+            updatePreviewControls();
+
+            const firstImgPath = State.images[0];
+            if (firstImgPath) {
+                try {
+                    if (Settings.getTimeSource() === 'original') {
+                        autoFillDate(firstImgPath);
+                    }
+                } catch (err) {
+                    _log.warn('[TimestampTool] autoFillDate 失敗:', err);
+                }
+                try {
+                    updatePreview();
+                } catch (err) {
+                    _log.warn('[TimestampTool] trigger updatePreview 失敗:', err);
+                }
+            }
+        }
+    } catch (e) {
+        _log.error('[TimestampTool] refreshSelection 遭攔截錯誤:', e);
+        setStatus('初始化載入失敗: ' + e.message, false);
+        setApplyBtn(false);
+        resetSelection();
+    } finally {
+        State.refreshing = false;
+    }
+}
+
 // ── 套用流程 ──────────────────────────────
 async function applyTimestamps() {
-    if (!isPluginCreated) return;
-    if (isApplying) return;
-    isApplying = true;
+    if (!State.pluginCreated) return;
+    if (State.applying) return;
+    State.applying = true;
 
-    const items = [...globalEagleItems];
+    const items = [...State.items];
     if (items.length === 0) {
         setStatus('沒有選取的圖片', false);
-        isApplying = false;
+        State.applying = false;
         return;
     }
 
-    applyCancelled = false;
+    State.cancelled = false;
     showLoading('正在套用時間戳記...', '');
 
-    // 綁定取消按鈕
     const cancelBtn = document.getElementById('cancelApplyBtn');
     if (cancelBtn) {
-        cancelBtn.onclick = () => { applyCancelled = true; };
+        cancelBtn.onclick = () => { State.cancelled = true; };
     }
 
     let success = 0;
@@ -410,24 +438,22 @@ async function applyTimestamps() {
 
     try {
         for (let i = 0; i < items.length; i++) {
-            if (applyCancelled) break; // 使用者取消
+            if (State.cancelled) break;
 
             const item = items[i];
-            const filePath = item.filePath;
+            const filePath = item.filePath || item.fileURL;
             updateProgress(i + 1, items.length);
 
             let tmpPath = null;
             try {
                 const opts = Settings.getAll(filePath);
 
-                // Step 1: 燒入 Canvas 並寫入暫存檔
-                const shortName = (item.name || '').length > 20
-                    ? (item.name || '').slice(0, 20) + '…'
+                const shortName = (item.name || '').length > FILE_NAME_MAX_LENGTH
+                    ? (item.name || '').slice(0, FILE_NAME_MAX_LENGTH) + '...'
                     : (item.name || '（未知）');
                 setStatus(`燒入中 ${i + 1}/${items.length}：${shortName}`);
                 tmpPath = await TimestampEngine.burnTimestamp(filePath, opts);
 
-                // Step 2: 加入 Eagle 圖庫
                 const nodePath = require('path');
                 const origBase = nodePath.basename(filePath, nodePath.extname(filePath));
                 const newName = `${origBase}(時間戳記)`;
@@ -441,26 +467,25 @@ async function applyTimestamps() {
 
                 success++;
             } catch (e) {
-                void('[TimestampTool] 處理失敗:', filePath, e);
+                _log.error('[TimestampTool] 處理失敗:', filePath, e);
                 setStatus(`第 ${i + 1} 張失敗：${e.message}`, false);
                 fail++;
-                await new Promise(r => setTimeout(r, 1500)); // 讓使用者看到錯誤
+                await new Promise(r => setTimeout(r, 1500));
             } finally {
                 if (tmpPath) TimestampEngine.cleanupTemp(tmpPath);
             }
         }
     } finally {
         hideLoading();
-        isApplying = false;
-        if (applyCancelled) {
+        State.applying = false;
+        if (State.cancelled) {
             setStatus(`已取消：成功 ${success} 張，剩餘未處理`, false);
         } else if (fail > 0) {
             setStatus(`完成：${success} 張成功，${fail} 張失敗`, false);
         } else {
             setStatus(`成功套用 ${success} 張！已建立 ${success} 個帶時間戳記的副本`, true);
         }
-        // 套用後保留原選取狀態顯示，不重新 getSelected（Eagle 的 selection 在 addFromPath 後可能已改變）
-        setApplyBtn(globalEagleItems.length > 0, `套用至 ${globalEagleItems.length} 張照片`);
+        setApplyBtn(State.items.length > 0, `套用至 ${State.items.length} 張照片`);
     }
 }
 
@@ -474,24 +499,22 @@ eagle.onPluginCreate((plugin) => {
     try {
         Settings.init();
     } catch (e) {
-        void('[TimestampTool] Settings.init 失敗:', e);
+        _log.error('[TimestampTool] Settings.init 失敗:', e);
     }
 
-    // 將事件監聽器加回來，這或許是唯一不會遭遇焦點遺失死鎖的官方解法！
+    // 註冊 Eagle 選取變更監聽
     if (window.eagle && typeof eagle.onItemSelectionChanged === 'function') {
         try {
             eagle.onItemSelectionChanged((items) => {
-                void('[TimestampTool] 收到 onItemSelectionChanged，數量:', items ? items.length : 0);
+                _log.info('[TimestampTool] 收到 onItemSelectionChanged，數量:', items ? items.length : 0);
                 if (items && Array.isArray(items)) {
-                    // 更新快取（若為空選取則清除快取）
-                    window._startupItems = items.length > 0 ? items : null;
-                    // 無論選取或清空，都重刷 UI（讓使用者取消全選時能看到空狀態）
-                    refreshSelection(items).catch(e => void(e));
+                    State.startupItems = items.length > 0 ? items : null;
+                    refreshSelection(items).catch(e => _log.warn(e));
                 }
             });
-            void('[TimestampTool] 成功註冊 onItemSelectionChanged (Passive Listener)');
+            _log.info('[TimestampTool] 成功註冊 onItemSelectionChanged (Passive Listener)');
         } catch (e) {
-            void('註冊選取監聽失敗:', e);
+            _log.warn('註冊選取監聽失敗:', e);
         }
     }
 
@@ -504,7 +527,7 @@ eagle.onPluginCreate((plugin) => {
     const refreshBtn = document.getElementById('refreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            refreshSelection().catch(e => void(e));
+            refreshSelection().catch(e => _log.warn(e));
         });
     }
 
@@ -513,27 +536,15 @@ eagle.onPluginCreate((plugin) => {
     const nextBtn = document.getElementById('nextBtn');
     if (prevBtn) {
         prevBtn.addEventListener('click', () => {
-            if (currentPreviewIndex > 0) {
-                currentPreviewIndex--;
-                updatePreviewControls();
-                // 僅「原始照片時間」模式才讀取 EXIF，不干擾手動或當前時間模式
-                if (Settings.getTimeSource() === 'original') {
-                    autoFillDate(currentSelectedImages[currentPreviewIndex]);
-                }
-                updatePreview();
+            if (State.previewIndex > 0) {
+                navigateToPreview(State.previewIndex - 1);
             }
         });
     }
     if (nextBtn) {
         nextBtn.addEventListener('click', () => {
-            if (currentPreviewIndex < currentSelectedImages.length - 1) {
-                currentPreviewIndex++;
-                updatePreviewControls();
-                // 僅「原始照片時間」模式才讀取 EXIF，不干擾手動或當前時間模式
-                if (Settings.getTimeSource() === 'original') {
-                    autoFillDate(currentSelectedImages[currentPreviewIndex]);
-                }
-                updatePreview();
+            if (State.previewIndex < State.images.length - 1) {
+                navigateToPreview(State.previewIndex + 1);
             }
         });
     }
@@ -542,31 +553,21 @@ eagle.onPluginCreate((plugin) => {
     document.addEventListener('keydown', (e) => {
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-        if (isApplying || currentSelectedImages.length === 0) return;
+        if (State.applying || State.images.length === 0) return;
 
-        if (e.key === 'ArrowLeft' && currentPreviewIndex > 0) {
+        if (e.key === 'ArrowLeft' && State.previewIndex > 0) {
             e.preventDefault();
-            currentPreviewIndex--;
-            updatePreviewControls();
-            if (Settings.getTimeSource() === 'original') {
-                autoFillDate(currentSelectedImages[currentPreviewIndex]);
-            }
-            updatePreview();
-        } else if (e.key === 'ArrowRight' && currentPreviewIndex < currentSelectedImages.length - 1) {
+            navigateToPreview(State.previewIndex - 1);
+        } else if (e.key === 'ArrowRight' && State.previewIndex < State.images.length - 1) {
             e.preventDefault();
-            currentPreviewIndex++;
-            updatePreviewControls();
-            if (Settings.getTimeSource() === 'original') {
-                autoFillDate(currentSelectedImages[currentPreviewIndex]);
-            }
-            updatePreview();
+            navigateToPreview(State.previewIndex + 1);
         }
     });
 
-    // UI 初始化與事件註冊完畢後，預設顯示空狀態等待點擊載入
+    // UI 初始化完畢，顯示空狀態
     setStatus('【請直接在 Eagle 點選您要的照片！】', false);
     setApplyBtn(false);
-    isPluginCreated = true;
+    State.pluginCreated = true;
 
     // 強制關閉 DevTools（初始化完成後立即執行 + 延遲再執行一次）
     _forceCloseDevTools();
@@ -587,44 +588,39 @@ eagle.onPluginCreate((plugin) => {
                         try {
                             if (window.eagle && eagle.plugin) {
                                 const p = eagle.plugin.showWindow();
-                                if (p && typeof p.catch === 'function') p.catch(e => { void('showWindow catch:', e); });
+                                if (p && typeof p.catch === 'function') p.catch(e => { _log.warn('showWindow catch:', e); });
                             }
                         } catch (err) {
-                            void('[TimestampTool] showWindow fallback:', err);
+                            _log.warn('[TimestampTool] showWindow fallback:', err);
                         }
-                        refreshSelection().catch(e => void('refreshSelection fallback:', e));
+                        refreshSelection().catch(e => _log.warn('refreshSelection fallback:', e));
                     }
                 });
             }
         }
-        // 舊版 Eagle 不支援 contextMenu.add，靜默略過
     } catch (e) {
-        void('[TimestampTool] 無法註冊右鍵選單:', e);
+        _log.warn('[TimestampTool] 無法註冊右鍵選單:', e);
     }
 });
 
 eagle.onPluginShow(() => {
-    if (!isPluginCreated) return;
-    // 首次顯示延遲 1 秒：onPluginCreate 完成後 Eagle item API 仍需時間初始化，
-    // 過早呼叫 getSelected() 會在 Eagle 內部（item.js）產生無法攔截的 unhandled rejection，
-    // 導致 Eagle 強制開啟 DevTools（即使 devTools:false）。延遲後 API 已就緒，不再觸發該錯誤。
-    const delay = _firstShowHandled ? 0 : 1000;
-    _firstShowHandled = true;
+    if (!State.pluginCreated) return;
+    const delay = State.firstShowDone ? 0 : FIRST_SHOW_DELAY_MS;
+    State.firstShowDone = true;
     setTimeout(() => {
-        refreshSelection().catch(e => void('[TimestampTool] onPluginShow refreshSelection:', e));
+        refreshSelection().catch(e => _log.warn('[TimestampTool] onPluginShow refreshSelection:', e));
     }, delay);
 });
 
 eagle.onPluginRun(() => {
-    if (!isPluginCreated) return;
-    // 同 onPluginShow：首次觸發使用相同的延遲保護機制
-    const delay = _firstShowHandled ? 0 : 1000;
-    _firstShowHandled = true;
+    if (!State.pluginCreated) return;
+    const delay = State.firstShowDone ? 0 : FIRST_SHOW_DELAY_MS;
+    State.firstShowDone = true;
     setTimeout(() => {
-        refreshSelection().catch(e => void('[TimestampTool] onPluginRun refreshSelection:', e));
+        refreshSelection().catch(e => _log.warn('[TimestampTool] onPluginRun refreshSelection:', e));
     }, delay);
 });
 
 eagle.onPluginHide(() => {
-    // 隱藏時無需額外操作
+    clearTimeout(previewTimeout);
 });
