@@ -8,26 +8,67 @@
 
 'use strict';
 
-// 雙層攔截 Eagle API 暖機期間產生的 unhandled rejection：
-// Eagle 的 getSelected() 在 plugin-create 未就緒時，會在內部創建一個獨立 promise 並 reject，
-// 這個 promise 可能在 web context（window）或 Node.js context（process）中，需要雙層攔截才能靜默
+// ══════════════════════════════════════════
+//  DevTools 防護層（必須最早載入）
+//  Eagle 某些版本會在偵測到 console 輸出或未捕獲錯誤時強制開啟 DevTools，
+//  即使 manifest.json 設定 devTools: false 也無效。
+//  策略：(1) 全面靜默 console (2) 攔截所有未捕獲錯誤 (3) 持續關閉 DevTools
+// ══════════════════════════════════════════
+
+// [防護 1] 靜默 console — 生產環境下覆蓋所有 console 方法，防止 Eagle 偵測到輸出
+const _noop = () => {};
+const _origConsole = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    info: console.info.bind(console),
+    debug: console.debug.bind(console),
+};
+console.log = _noop;
+console.warn = _noop;
+console.error = _noop;
+console.info = _noop;
+console.debug = _noop;
+
+// [防護 2] 攔截所有未捕獲的 rejection（不限 plugin-create）
 window.addEventListener('unhandledrejection', (event) => {
-    if (event.reason && typeof event.reason.message === 'string' &&
-        event.reason.message.includes('plugin-create')) {
-        event.preventDefault();
-    }
+    event.preventDefault();
 });
-// Node.js / Electron process 層攔截（捕獲不在 window scope 內的 promise rejection）
+// Node.js / Electron process 層攔截
 try {
     if (typeof process !== 'undefined' && typeof process.on === 'function') {
-        process.on('unhandledRejection', (reason) => {
-            if (reason && typeof reason.message === 'string' &&
-                reason.message.includes('plugin-create')) {
-                // 靜默：這是 Eagle API 暖機期間的已知錯誤，不影響功能
-            }
-        });
+        process.on('unhandledRejection', () => { /* 全面靜默 */ });
     }
-} catch (_) { /* Eagle 插件環境不支援 process 時直接忽略 */ }
+} catch (_) { }
+
+// [防護 3] 攔截全域錯誤，阻止 Eagle 因偵測到錯誤而開啟 DevTools
+window.onerror = () => true;
+
+// [防護 4] 封鎖 F12 / Ctrl+Shift+I 等快捷鍵，防止意外開啟 DevTools
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'F12' ||
+        (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) ||
+        (e.ctrlKey && e.shiftKey && (e.key === 'J' || e.key === 'j'))) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+}, true);
+
+// [防護 5] 持續關閉 DevTools（每 3 秒檢查一次，共 30 秒）
+let _devToolsGuardCount = 0;
+const _devToolsGuardMax = 10;
+function _forceCloseDevTools() {
+    try {
+        if (eagle && eagle.plugin && typeof eagle.plugin.closeDevTools === 'function') {
+            eagle.plugin.closeDevTools();
+        }
+    } catch (_) { }
+}
+const _devToolsGuardTimer = setInterval(() => {
+    _forceCloseDevTools();
+    _devToolsGuardCount++;
+    if (_devToolsGuardCount >= _devToolsGuardMax) clearInterval(_devToolsGuardTimer);
+}, 3000);
 
 const SUPPORTED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
 
@@ -58,7 +99,7 @@ function setApplyBtn(enabled, label) {
 
 // 在 UI 上顯示錯誤（比只有 console 更好診斷）
 function showError(msg) {
-    console.error('[TimestampTool]', msg);
+    void('[TimestampTool]', msg);
     setStatus('❌ ' + msg, false);
     hideLoading();
     setApplyBtn(false, '套用時間戳記');
@@ -67,7 +108,7 @@ function showError(msg) {
 // ── 篩選圖片 ──────────────────────────────
 function filterImages(items) {
     if (!Array.isArray(items)) {
-        console.warn('[TimestampTool] items 不是陣列:', items);
+        void('[TimestampTool] items 不是陣列:', items);
         return [];
     }
     return items.filter(item => {
@@ -113,7 +154,7 @@ async function refreshSelection(passedItems = null) {
         } else if (window._startupItems && window._startupItems.length > 0) {
             all = window._startupItems;
             window._startupItems = null; // 使用後清除，確保下次重整時重新向 Eagle 取得最新選取
-            console.log('[TimestampTool] 成功從 onItemSelectionChanged 快取中取得照片清單！');
+            void('[TimestampTool] 成功從 onItemSelectionChanged 快取中取得照片清單！');
         } else {
             setStatus('向 Eagle 請求選取清單...', true);
 
@@ -138,11 +179,11 @@ async function refreshSelection(passedItems = null) {
                 } catch (apiErr) {
                     clearTimeout(timeoutId); // 失敗時（含 retry）也清除，避免 timer 洩漏
                     if (apiErr && apiErr.message && apiErr.message.includes('plugin-create')) {
-                        console.warn(`[TimestampTool] Eagle API 尚未初始化，等待中... (${initRetry + 1}/10)`);
+                        void(`[TimestampTool] Eagle API 尚未初始化，等待中... (${initRetry + 1}/10)`);
                         setStatus(`API 暖機中... (${initRetry + 1}/10)`, true);
                         await new Promise(r => setTimeout(r, 50));
                     } else if (apiErr && apiErr.message === 'EAGLE_API_TIMEOUT') {
-                        console.warn('[TimestampTool] getSelected 逾時未回應，強制打斷以保護 UI。');
+                        void('[TimestampTool] getSelected 逾時未回應，強制打斷以保護 UI。');
                         isRefreshing = false;
                         if (!_autoRetryOnTimeout) {
                             // 第一次逾時：靜默等待 Eagle API 初始化，3 秒後自動重試
@@ -151,7 +192,7 @@ async function refreshSelection(passedItems = null) {
                             setTimeout(() => {
                                 _autoRetryOnTimeout = false;
                                 if (!isApplying && !isRefreshing) {
-                                    refreshSelection().catch(e => console.warn('[TimestampTool] 自動重試失敗:', e));
+                                    refreshSelection().catch(e => void('[TimestampTool] 自動重試失敗:', e));
                                 }
                             }, 3000);
                         } else {
@@ -161,7 +202,7 @@ async function refreshSelection(passedItems = null) {
                         return;
                     } else {
                         setStatus(`API 崩潰: ${String(apiErr)}`, false);
-                        console.warn(apiErr);
+                        void(apiErr);
                         isRefreshing = false;
                         return; // 遇到未知的 API 錯誤直接停止重試並顯示
                     }
@@ -216,18 +257,18 @@ async function refreshSelection(passedItems = null) {
                         autoFillDate(firstImgPath);
                     }
                 } catch (err) {
-                    console.error('[TimestampTool] autoFillDate 失敗:', err);
+                    void('[TimestampTool] autoFillDate 失敗:', err);
                 }
                 // 更新預覽
                 try {
                     updatePreview();
                 } catch (err) {
-                    console.error('[TimestampTool] trigger updatePreview 失敗:', err);
+                    void('[TimestampTool] trigger updatePreview 失敗:', err);
                 }
             }
         }
     } catch (e) {
-        console.error('[TimestampTool] refreshSelection 遭攔截錯誤:', e);
+        void('[TimestampTool] refreshSelection 遭攔截錯誤:', e);
         setStatus('初始化載入失敗: ' + e.message, false);
         setApplyBtn(false);
         currentSelectedImages = [];
@@ -267,7 +308,7 @@ function autoFillDate(filePath) {
             badge.className = 'exif-source-badge ' + (currentSelectionHadExif ? 'exif-badge-exif' : 'exif-badge-file');
         }
     } catch (e) {
-        console.error('[TimestampTool] autoFillDate error:', e);
+        void('[TimestampTool] autoFillDate error:', e);
     }
 }
 
@@ -318,7 +359,7 @@ function updatePreview() {
 
         const canvas = document.getElementById('previewCanvas');
         if (!canvas) {
-            console.warn('[TimestampTool] 找不到 previewCanvas');
+            void('[TimestampTool] 找不到 previewCanvas');
             return;
         }
 
@@ -326,7 +367,7 @@ function updatePreview() {
             const opts = Settings.getAll(currentPreviewPath);
             await TimestampEngine.renderPreview(currentPreviewPath, opts, canvas);
         } catch (e) {
-            console.error('[TimestampTool] 預覽繪製失敗:', e);
+            void('[TimestampTool] 預覽繪製失敗:', e);
             showError(`預覽載入失敗: ${e.message}`);
         }
     }, 150);
@@ -400,7 +441,7 @@ async function applyTimestamps() {
 
                 success++;
             } catch (e) {
-                console.error('[TimestampTool] 處理失敗:', filePath, e);
+                void('[TimestampTool] 處理失敗:', filePath, e);
                 setStatus(`第 ${i + 1} 張失敗：${e.message}`, false);
                 fail++;
                 await new Promise(r => setTimeout(r, 1500)); // 讓使用者看到錯誤
@@ -433,24 +474,24 @@ eagle.onPluginCreate((plugin) => {
     try {
         Settings.init();
     } catch (e) {
-        console.warn('[TimestampTool] Settings.init 失敗:', e);
+        void('[TimestampTool] Settings.init 失敗:', e);
     }
 
     // 將事件監聽器加回來，這或許是唯一不會遭遇焦點遺失死鎖的官方解法！
     if (window.eagle && typeof eagle.onItemSelectionChanged === 'function') {
         try {
             eagle.onItemSelectionChanged((items) => {
-                console.log('[TimestampTool] 收到 onItemSelectionChanged，數量:', items ? items.length : 0);
+                void('[TimestampTool] 收到 onItemSelectionChanged，數量:', items ? items.length : 0);
                 if (items && Array.isArray(items)) {
                     // 更新快取（若為空選取則清除快取）
                     window._startupItems = items.length > 0 ? items : null;
                     // 無論選取或清空，都重刷 UI（讓使用者取消全選時能看到空狀態）
-                    refreshSelection(items).catch(e => console.warn(e));
+                    refreshSelection(items).catch(e => void(e));
                 }
             });
-            console.log('[TimestampTool] 成功註冊 onItemSelectionChanged (Passive Listener)');
+            void('[TimestampTool] 成功註冊 onItemSelectionChanged (Passive Listener)');
         } catch (e) {
-            console.warn('註冊選取監聽失敗:', e);
+            void('註冊選取監聽失敗:', e);
         }
     }
 
@@ -463,7 +504,7 @@ eagle.onPluginCreate((plugin) => {
     const refreshBtn = document.getElementById('refreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            refreshSelection().catch(e => console.warn(e));
+            refreshSelection().catch(e => void(e));
         });
     }
 
@@ -527,13 +568,10 @@ eagle.onPluginCreate((plugin) => {
     setApplyBtn(false);
     isPluginCreated = true;
 
-    // 強制關閉 DevTools：部分 Eagle 版本會在偵測到特定事件時自動開啟 DevTools，
-    // 呼叫此 API 可在初始化完成後立即關閉，搭配 manifest devTools:false 雙重保護
-    try {
-        if (eagle.plugin && typeof eagle.plugin.closeDevTools === 'function') {
-            eagle.plugin.closeDevTools();
-        }
-    } catch (_) { }
+    // 強制關閉 DevTools（初始化完成後立即執行 + 延遲再執行一次）
+    _forceCloseDevTools();
+    setTimeout(_forceCloseDevTools, 500);
+    setTimeout(_forceCloseDevTools, 1500);
 
     // 註冊右鍵選單
     try {
@@ -549,19 +587,19 @@ eagle.onPluginCreate((plugin) => {
                         try {
                             if (window.eagle && eagle.plugin) {
                                 const p = eagle.plugin.showWindow();
-                                if (p && typeof p.catch === 'function') p.catch(e => { console.warn('showWindow catch:', e); });
+                                if (p && typeof p.catch === 'function') p.catch(e => { void('showWindow catch:', e); });
                             }
                         } catch (err) {
-                            console.warn('[TimestampTool] showWindow fallback:', err);
+                            void('[TimestampTool] showWindow fallback:', err);
                         }
-                        refreshSelection().catch(e => console.warn('refreshSelection fallback:', e));
+                        refreshSelection().catch(e => void('refreshSelection fallback:', e));
                     }
                 });
             }
         }
         // 舊版 Eagle 不支援 contextMenu.add，靜默略過
     } catch (e) {
-        console.warn('[TimestampTool] 無法註冊右鍵選單:', e);
+        void('[TimestampTool] 無法註冊右鍵選單:', e);
     }
 });
 
@@ -573,7 +611,7 @@ eagle.onPluginShow(() => {
     const delay = _firstShowHandled ? 0 : 1000;
     _firstShowHandled = true;
     setTimeout(() => {
-        refreshSelection().catch(e => console.warn('[TimestampTool] onPluginShow refreshSelection:', e));
+        refreshSelection().catch(e => void('[TimestampTool] onPluginShow refreshSelection:', e));
     }, delay);
 });
 
@@ -583,7 +621,7 @@ eagle.onPluginRun(() => {
     const delay = _firstShowHandled ? 0 : 1000;
     _firstShowHandled = true;
     setTimeout(() => {
-        refreshSelection().catch(e => console.warn('[TimestampTool] onPluginRun refreshSelection:', e));
+        refreshSelection().catch(e => void('[TimestampTool] onPluginRun refreshSelection:', e));
     }, delay);
 });
 

@@ -1,5 +1,25 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
+## [1.6.8] - 2026-02-23
+
+### 修復 (Fixed)
+- **DevTools 自動開啟問題（7 層防護體系）**：實施全面性 DevTools 防護，徹底解決各種 Eagle 版本下 DevTools 被強制開啟的問題：
+  1. **Console 全面靜默**：覆蓋所有 `console.log/warn/error/info/debug` 方法，防止 Eagle 偵測到任何 console 輸出
+  2. **Unhandled Rejection 全面攔截**：擴大攔截範圍，不再僅限 `plugin-create` 錯誤，所有未捕獲的 Promise rejection 一律靜默
+  3. **全域錯誤攔截**：`window.onerror` 回傳 `true`，阻止錯誤冒泡至 Eagle 的保護機制
+  4. **快捷鍵封鎖**：封鎖 F12 / Ctrl+Shift+I / Ctrl+Shift+J，防止意外或自動觸發 DevTools
+  5. **持續性 closeDevTools**：每 3 秒巡邏執行 `eagle.plugin.closeDevTools()`（共 30 秒），加上 `onPluginCreate` 完成後的三連擊（0ms / 500ms / 1500ms）
+  6. **Manifest 雙層宣告**：root 層與 `main` 物件同時設定 `devTools: false`
+  7. **外部資源移除**：移除 Google Fonts `@import`，避免網路請求失敗在 Chromium 中觸發錯誤
+
+### 變更 (Changed)
+- 所有 JS 檔案的 `console.log/warn/error` 呼叫替換為靜默的 `void()` 表達式
+- 保留 `_origConsole` 物件供開發時手動偵錯使用
+- 字體改用系統內建字體堆疊（Microsoft JhengHei / Apple System / Arial），確保完全離線可用
+- 清理 `index.html` 中被註解掉的舊版全域攔截器
+
+---
+
 ## [1.6.7] - 2026-02-22
 
 ### 修復 (Fixed)
