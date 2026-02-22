@@ -6,6 +6,26 @@
 
 'use strict';
 
+// ── 日誌安全引用（_log 由 main.js 定義並掛載到 window._log） ──
+// 本檔案比 main.js 先載入，但所有函式在實際執行時 main.js 已就緒
+const _tsNoop = () => {};
+function _getLog() {
+    return window._log || { info: _tsNoop, warn: _tsNoop, error: _tsNoop };
+}
+
+// ── 常數定義 ─────────────────────────────
+const JPEG_QUALITY = 0.95;
+const EXIF_SCAN_BYTES = 65536;
+const MIN_FONT_SIZE_PX = 10;
+// MAX_PREVIEW_SIZE 定義在 renderPreview 內部（1200），保持不變
+
+/** MIME 類型對照表 */
+const MIME_MAP = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.png': 'image/png', '.webp': 'image/webp',
+    '.gif': 'image/gif', '.bmp': 'image/bmp',
+};
+
 /** 格式化日期字串 */
 function formatDate(date, fmt) {
     const pad = (n) => String(n).padStart(2, '0');
@@ -26,28 +46,37 @@ function getExt(filePath) {
     return i !== -1 ? filePath.slice(i).toLowerCase() : '.jpg';
 }
 
-/** 本地圖片路徑 → HTMLImageElement */
+/** 本地圖片路徑 → HTMLImageElement（file:// 優先，base64 fallback） */
 function loadImage(filePath) {
     return new Promise((resolve, reject) => {
+        if (!filePath) return reject(new Error('圖片路徑為空'));
+        const fs = require('fs');
+        if (!fs.existsSync(filePath)) return reject(new Error('檔案不存在'));
+
+        const img = new window.Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => {
+            // file:// 失敗時 fallback 到 base64
+            _loadImageBase64(filePath).then(resolve).catch(reject);
+        };
+        img.src = 'file:///' + filePath.replace(/\\/g, '/');
+    });
+}
+
+/** base64 fallback 載入方式 */
+function _loadImageBase64(filePath) {
+    return new Promise((resolve, reject) => {
         try {
-            if (!filePath) throw new Error('圖片路徑為空');
             const fs = require('fs');
-            if (!fs.existsSync(filePath)) throw new Error('檔案不存在');
             const buf = fs.readFileSync(filePath);
             const ext = getExt(filePath);
-            const mime = {
-                '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                '.png': 'image/png', '.webp': 'image/webp',
-                '.gif': 'image/gif', '.bmp': 'image/bmp'
-            }[ext] || 'image/jpeg';
-            const b64 = buf.toString('base64');
+            const mime = MIME_MAP[ext] || 'image/jpeg';
             const img = new window.Image();
             img.onload = () => resolve(img);
-            img.onerror = (e) => reject(new Error(`HTMLImageElement onload 失敗\n路徑：${filePath}`));
-            img.src = `data:${mime};base64,${b64}`;
+            img.onerror = () => reject(new Error('base64 載入失敗'));
+            img.src = `data:${mime};base64,${buf.toString('base64')}`;
         } catch (e) {
-            console.error('[TimestampTool] loadImage Error:', e);
-            reject(new Error(`載入圖片失敗: ${e.message}\n路徑：${filePath}`));
+            reject(new Error(`載入圖片失敗: ${e.message}`));
         }
     });
 }
@@ -68,8 +97,8 @@ function calcPos(pos, W, H, margin) {
     return tbl[pos] || tbl['bottom-right'];
 }
 
-/** 
- * 讀取圖片 EXIF 日期 (無相依，掃描 buffer 找日期格式)
+/**
+ * 讀取圖片 EXIF 日期（無相依，掃描 buffer 找日期格式）
  * 尋找格式如 '2026:01:16 12:34:56'
  */
 function readExifDate(filePath) {
@@ -77,7 +106,7 @@ function readExifDate(filePath) {
     try {
         const fs = require('fs');
         const stats = fs.statSync(filePath);
-        const readSize = Math.min(65536, stats.size);
+        const readSize = Math.min(EXIF_SCAN_BYTES, stats.size);
         if (readSize === 0) return null;
 
         fd = fs.openSync(filePath, 'r');
@@ -91,13 +120,31 @@ function readExifDate(filePath) {
             return new Date(dStr);
         }
     } catch (e) {
-        console.warn('[TimestampTool] EXIF 讀取例外:', e);
+        _getLog().warn('[TimestampTool] EXIF 讀取例外:', e);
     } finally {
         if (fd !== null) {
-            try { require('fs').closeSync(fd); } catch (e) { }
+            try { require('fs').closeSync(fd); } catch (_) { }
         }
     }
     return null;
+}
+
+/**
+ * 統一 EXIF 日期讀取入口
+ * 優先讀取 EXIF，fallback 到檔案建立時間，最後使用當前時間
+ * @returns {{ date: Date, hadExif: boolean }}
+ */
+function getDateForFile(filePath) {
+    let date = readExifDate(filePath);
+    const hadExif = !!date;
+    if (!date) {
+        try {
+            date = require('fs').statSync(filePath).birthtime;
+        } catch (_) {
+            date = new Date();
+        }
+    }
+    return { date, hadExif };
 }
 
 /**
@@ -108,12 +155,12 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
         date = new Date(),
         format = 'YYYY/M/D',
         position = 'bottom-right',
-        fontSize = 4,          // 相對短邊百分比
-        textColor = '#FF9900', // 預設橘黃色
+        fontSize = 4,
+        textColor = '#FF9900',
         bgColor = '#000000',
-        bgOpacity = 0,         // 預設無背景
-        padding = 2,           // 相對短邊百分比
-        shadow = true,         // 文字陰影（預設開啟）
+        bgOpacity = 0,
+        padding = 2,
+        shadow = true,
     } = opts;
 
     // 重置 transform，防止不同 DPI 設定的 PC 上 transform 累積導致渲染偏移
@@ -123,7 +170,7 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
 
     // ── 計算等比例大小 ──
     const baseSize = Math.min(canvas.width, canvas.height);
-    const actualFontSize = Math.max(10, Math.floor(baseSize * (fontSize / 100)));
+    const actualFontSize = Math.max(MIN_FONT_SIZE_PX, Math.floor(baseSize * (fontSize / 100)));
     const actualPadding = Math.floor(baseSize * (padding / 100));
 
     // ── 準備文字 ──
@@ -181,7 +228,6 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
         ctx.textAlign = p.ta;
         ctx.textBaseline = p.tb;
 
-        // 文字陰影
         if (shadow !== false) {
             ctx.shadowColor = 'rgba(0,0,0,0.65)';
             ctx.shadowBlur = Math.max(2, Math.floor(actualFontSize * 0.25));
@@ -198,7 +244,7 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
     } catch (e) {
         throw new Error('Canvas 繪製文字時發生錯誤: ' + e.message);
     } finally {
-        // 無論成功或失敗，都必須重置陰影，避免殘留狀態影響下一次繪製（日期重疊 BUG 的防護）
+        // 無論成功或失敗，都必須重置陰影，避免殘留狀態影響下一次繪製
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
         ctx.shadowOffsetX = 0;
@@ -206,7 +252,7 @@ function drawTimestampToContext(ctx, canvas, img, opts) {
     }
 }
 
-/** 
+/**
  * 即時預覽：將結果縮放繪製到指定的 canvas 上
  */
 async function renderPreview(filePath, opts, targetCanvas) {
@@ -215,7 +261,6 @@ async function renderPreview(filePath, opts, targetCanvas) {
         const img = await loadImage(filePath);
         if (!img) throw new Error('RenderPreview 載入圖片回傳為空');
 
-        // 預覽不需繪製原尺寸，若太大可縮放以優化效能
         const MAX_PREVIEW_SIZE = 1200;
         let w = img.naturalWidth || img.width;
         let h = img.naturalHeight || img.height;
@@ -234,8 +279,8 @@ async function renderPreview(filePath, opts, targetCanvas) {
 
         drawTimestampToContext(ctx, targetCanvas, img, opts);
     } catch (err) {
-        console.error('[TimestampTool] renderPreview 發生錯誤:', err);
-        throw err; // 將錯誤往上拋，讓 main.js 接住
+        _getLog().warn('[TimestampTool] renderPreview 發生錯誤:', err);
+        throw err;
     }
 }
 
@@ -244,14 +289,12 @@ async function renderPreview(filePath, opts, targetCanvas) {
  * @returns {Promise<string>} 暫存檔路徑
  */
 async function burnTimestamp(filePath, opts) {
-    // ── 載入圖片與 Canvas ──
     const img = await loadImage(filePath);
     const canvas = document.getElementById('workCanvas');
     const ctx = canvas.getContext('2d');
     canvas.width = img.naturalWidth || img.width || 800;
     canvas.height = img.naturalHeight || img.height || 600;
 
-    // 使用共用繪製邏輯
     drawTimestampToContext(ctx, canvas, img, opts);
 
     // ── 輸出暫存檔 ──
@@ -277,7 +320,7 @@ async function burnTimestamp(filePath, opts) {
             };
             fr.onerror = () => reject(new Error('FileReader 讀取 Blob 失敗'));
             fr.readAsArrayBuffer(blob);
-        }, mime, 0.95);
+        }, mime, JPEG_QUALITY);
     });
 
     return tmp;
@@ -285,7 +328,17 @@ async function burnTimestamp(filePath, opts) {
 
 /** 清理暫存 */
 function cleanupTemp(f) {
-    try { const fs = require('fs'); if (f && fs.existsSync(f)) fs.unlinkSync(f); } catch (_) { }
+    try {
+        const fs = require('fs');
+        if (f && fs.existsSync(f)) fs.unlinkSync(f);
+    } catch (_) { }
 }
 
-window.TimestampEngine = { burnTimestamp, renderPreview, readExifDate, formatDate, cleanupTemp };
+window.TimestampEngine = {
+    burnTimestamp,
+    renderPreview,
+    readExifDate,
+    getDateForFile,
+    formatDate,
+    cleanupTemp,
+};
