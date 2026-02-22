@@ -1,6 +1,6 @@
 # Eagle 時間戳記工具（Timestamp Tool）
 
-> 版本：1.6.2 ｜ 2026-02-22
+> 版本：1.6.3 ｜ 2026-02-22
 
 為 Eagle 4 設計的輕量插件，批量為照片燒入視覺化時間戳記。**完全本地運作**，零外部 npm 套件依賴。
 支援從相片 EXIF 或檔案建立時間動態讀取日期，並提供左右並排的即時多圖預覽介面。
@@ -48,7 +48,7 @@ EAGLE Plugin/
 |------|------|
 | **時間來源** | 原始照片 EXIF 時間 / 當前時間 / 統一自訂時間 |
 | **顯示格式** | 多種格式，預設 `YYYY/MM/DD` |
-| **位置** | 九宮格任選（預設右下角） |
+| **位置** | 底部三選（↙ 左 / ↓ 中 / ↘ 右，預設右下角） |
 | **字型大小** | 相對短邊對角值的百分比（1% ~ 20%） |
 | **文字 / 背景顏色** | 色彩選擇器 |
 | **背景透明度** | 0%（無背景）~ 100% |
@@ -93,3 +93,5 @@ EAGLE Plugin/
 - `manifest.json` 的 `main` 必須是**物件**格式，並需 `platform`/`arch` 欄位
 - `ctx.roundRect()` 已加入降級處理，相容舊版 Electron
 - 所有 async 操作必須有完整的 `try...catch`，未捕捉的錯誤會觸發 DevTools 彈出
+- `Promise.race` 中的 `fetchPromise` 需立刻附加 `.catch(() => {})` — 若 timeout 先觸發，fetchPromise 在 race 結束後若仍 reject 將成為 Unhandled Promise Rejection
+- `timeoutId` 必須宣告於 `try-catch` **外層**，確保 `catch` 可執行 `clearTimeout`，否則 retry 迴圈中每輪都會洩漏一個 timer
