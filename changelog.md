@@ -1,5 +1,25 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
+## [1.6.5] - 2026-02-22
+
+### 修復 (Fixed)
+- **插件啟動後需手動重整才能讀取已選取照片**：`EAGLE_API_TIMEOUT` 發生後改為自動在 3 秒後重試一次，讓 Eagle API 有充分時間完成初始化，用戶無需手動點擊「重整」按鈕；僅在第二次逾時後才顯示手動操作提示。
+- **`Uncaught (in promise)` 控制台噪音（第二層攔截）**：加入 `process.on('unhandledRejection')` 於 Node.js / Electron process 層攔截，補足 `window.addEventListener('unhandledrejection')` 無法觸及的部分；Eagle 的 `getSelected()` 在暖機期間於 process context 創建的未捕獲 Promise 現可被靜默。
+
+### 變更 (Changed)
+- `manifest.json` 關閉 DevTools（`devTools: false`），正式版不再自動開啟開發者工具。
+
+---
+
+## [1.6.4] - 2026-02-22
+
+### 修復 (Fixed)
+- **`Uncaught (in promise)` 控制台噪音（第一層攔截）**：加入 `window.addEventListener('unhandledrejection')` 全局攔截，靜默 Eagle API 暖機期間在 web context 創建的未捕獲 Promise rejection。
+- **跨 PC 日期重疊 BUG**：`drawTimestampToContext()` 開頭新增 `ctx.setTransform(1,0,0,1,0,0)` 重置 transform，防止高 DPI / Windows 縮放設定不同的 PC 上 transform 累積導致渲染偏移。
+- **陰影殘留導致下次繪製異常**：將陰影重置（`shadowColor`、`shadowBlur`、`shadowOffsetX`、`shadowOffsetY`）從 `try` 區塊內部移至 `finally` 區塊，確保無論 `fillText` 是否拋出例外，陰影狀態都一定被清除，防止狀態污染下一次繪製。
+
+---
+
 ## [1.6.3] - 2026-02-22
 
 ### 修復 (Fixed)

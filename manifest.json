@@ -1,6 +1,6 @@
 {
   "id": "com.antigravity.timestamp",
-  "version": "1.6.3",
+  "version": "1.6.5",
   "platform": "all",
   "arch": "all",
   "name": "時間戳記工具",
@@ -15,7 +15,7 @@
     "date",
     "時間戳記"
   ],
-  "devTools": true,
+  "devTools": false,
   "main": {
     "url": "index.html",
     "width": 800,
