@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>時間戳記工具</title>
+  <!-- 全域錯誤攔截優先載入 -->
+  <!-- 全域錯誤攔截暫時關閉，讓開發者工具可以完全接收
+  <script>
+    window.onerror = function (msg, url, line, col, error) {
+      setTimeout(() => {
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff0000;color:#fff;padding:15px;font-size:14px;z-index:999999;word-break:break-all;font-weight:bold;';
+        errorDiv.innerHTML = `🚨 致命錯誤攔截：<br>${msg}<br><small>${url}:${line}:${col}</small><br><pre>${error ? error.stack : ''}</pre>`;
+        document.body.appendChild(errorDiv);
+      }, 100);
+      return true; // 強制攔截，阻止 Electron 彈出 DevTools
+    };
+    window.addEventListener('unhandledrejection', (event) => {
+      let reason = event.reason;
+      let msg = '未處理的 Promise 拒絕';
+      let stack = '';
+      if (reason instanceof Error) {
+        msg += ': ' + reason.message;
+        stack = reason.stack;
+      } else {
+        msg += ': ' + JSON.stringify(reason);
+      }
+      window.onerror(msg, '', 0, 0, { stack: stack });
+      event.preventDefault(); // 阻止 DevTools
+    });
+  </script>
+  -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+  <div class="app">
+    <!-- 標題列 -->
+    <header class="header">
+      <div class="header-icon">🕐</div>
+      <div class="header-text">
+        <h1>時間戳記工具</h1>
+        <p class="subtitle">為選取的照片燒入時間戳記</p>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <!-- 左側：設定控制面板 -->
+      <aside class="settings-panel">
+        <div class="settings">
+
+          <!-- ① 時間來源 -->
+          <div class="setting-group">
+            <label class="setting-label">⏰ 時間來源</label>
+            <div class="toggle-group" id="timeSourceToggle">
+              <button class="toggle-btn active" data-source="original">📸 原始照片時間</button>
+              <button class="toggle-btn" data-source="now">🕐 當前時間</button>
+              <button class="toggle-btn" data-source="manual">✏️ 統一自訂時間</button>
+            </div>
+          </div>
+
+          <!-- ② 時間預覽顯示（所有模式皆顯示） -->
+          <div class="setting-group" id="manualDateGroup">
+            <label class="setting-label">
+              <span id="timeDisplayLabel">📸 原始照片時間</span>
+              <span class="exif-source-badge" id="exifSourceBadge"></span>
+            </label>
+            <input type="datetime-local" id="manualDatetime" class="datetime-input" value="2026-02-21T18:28" />
+            <p class="hint" id="timeDisplayHint">從 EXIF 或檔案資訊自動讀取，切換照片時會更新</p>
+          </div>
+
+          <!-- ③ 日期格式 -->
+          <div class="setting-group">
+            <label class="setting-label">🗓 顯示格式</label>
+            <select id="dateFormat" class="select-input">
+              <option value="YYYY/M/D">YYYY/M/D (單字元無補零)</option>
+              <option value="YYYY/MM/DD" selected>YYYY/MM/DD (主要日期)</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD (標準日期)</option>
+              <option value="YYYY-MM-DD HH:mm:ss">YYYY-MM-DD HH:mm:ss (完整含時間)</option>
+              <option value="MM/DD/YYYY">MM/DD/YYYY (美式)</option>
+            </select>
+          </div>
+
+          <!-- ④ 位置 -->
+          <div class="setting-group">
+            <label class="setting-label">📌 底部文字位置</label>
+            <div class="toggle-group" id="positionToggle">
+              <button class="toggle-btn" data-pos="bottom-left">↙ 左</button>
+              <button class="toggle-btn" data-pos="bottom-center">↓ 中</button>
+              <button class="toggle-btn active" data-pos="bottom-right">↘ 右</button>
+            </div>
+          </div>
+
+          <!-- ⑤ 字型大小 -->
+          <div class="setting-group">
+            <label class="setting-label">🔤 字型大小 (相對比例 %)</label>
+            <div class="slider-row">
+              <input type="range" id="fontSize" class="slider" min="1" max="20" value="4">
+              <input type="number" id="fontSizeInput" class="number-input" min="1" max="20" value="4">
+            </div>
+          </div>
+
+          <!-- 顏色與透明度 -->
+          <div class="color-row">
+            <div class="setting-group color-item">
+              <label class="setting-label">🎨 文字顏色</label>
+              <input type="color" id="textColor" class="color-input" value="#FF9900">
+            </div>
+            <div class="setting-group color-item">
+              <label class="setting-label">🖌️ 背景顏色</label>
+              <input type="color" id="bgColor" class="color-input" value="#000000">
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <label class="setting-label">🪟 背景透明度</label>
+            <div class="slider-row">
+              <input type="range" id="bgOpacity" class="slider" min="0" max="100" value="0">
+              <span class="value-badge" id="bgOpacityValue">0%</span>
+            </div>
+          </div>
+
+          <!-- 額外設定 -->
+          <div class="setting-group">
+            <label class="setting-label">↔ 照片邊距</label>
+            <div class="slider-row">
+              <input type="range" id="padding" class="slider" min="0" max="10" value="2">
+              <span class="value-badge" id="paddingValue">2%</span>
+            </div>
+          </div>
+
+          <!-- 文字陰影 -->
+          <div class="setting-group">
+            <label class="setting-label">💡 文字陰影</label>
+            <div class="toggle-group" id="shadowToggle">
+              <button class="toggle-btn active" data-shadow="on">✨ 開啟</button>
+              <button class="toggle-btn" data-shadow="off">關閉</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部套用按鈕區 -->
+        <footer class="footer">
+          <div class="selection-info" id="selectionInfo">
+            <span class="info-icon">ℹ️</span>
+            <span id="infoText">請在 Eagle 中選取照片</span>
+            <button id="refreshBtn" class="icon-btn refresh-btn" title="重新整理選取">🔄</button>
+          </div>
+          <button class="btn-apply" id="applyBtn" disabled>
+            <span class="btn-icon">⏱</span>
+            <span id="applyBtnText">套用時間戳記</span>
+          </button>
+        </footer>
+      </aside>
+
+      <!-- 右側：預覽區塊 -->
+      <section class="preview-panel">
+        <div class="preview-container">
+          <canvas id="previewCanvas"></canvas>
+        </div>
+        <div class="preview-controls">
+          <button class="icon-btn" id="prevBtn" disabled>❮</button>
+          <span class="page-indicator" id="previewPage">1 / 1</span>
+          <button class="icon-btn" id="nextBtn" disabled>❯</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- 處理中覆蓋層 -->
+  <div class="overlay" id="loadingOverlay">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <p id="loadingText">處理中...</p>
+      <p class="loading-sub" id="loadingProgress">0 / 0</p>
+      <button class="btn-cancel" id="cancelApplyBtn">取消</button>
+    </div>
+  </div>
+
+  <!-- 隱藏 Canvas（本地圖片合成用） -->
+  <canvas id="workCanvas" style="display:none;"></canvas>
+
+  <script src="js/timestamp.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/main.js"></script>
+</body>
+
+</html>
