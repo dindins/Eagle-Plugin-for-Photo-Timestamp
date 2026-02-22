@@ -1,6 +1,11 @@
-# Skill: Eagle 4 Plugin API 參考
+---
+name: eagle-api
+description: This skill should be used when the user asks about "Eagle API", "addFromPath usage", "getSelected behavior", "Eagle item properties", "Eagle event hooks", "plugin lifecycle", or needs guidance on Eagle 4 Plugin API constraints, read-only getters, and Node.js module usage within the Electron environment.
+---
 
-當你在開發 Eagle Timestamp 插件、需要查詢 Eagle API 的限制與行為時使用。
+# Eagle 4 Plugin API 參考
+
+Eagle Timestamp 插件開發中查詢 Eagle API 限制與行為時使用。
 
 ---
 
@@ -38,7 +43,7 @@ eagle.item.addFromPath(filePath: string, options: {
 
 ## getSelected 防護模式
 
-`getSelected()` 在插件剛開啟時有機率 timeout 或 throw。目前的防護寫法：
+`getSelected()` 在插件剛開啟時有機率 timeout 或 throw。防護寫法：
 
 ```js
 for (let retry = 0; retry < 10; retry++) {
@@ -50,6 +55,8 @@ for (let retry = 0; retry < 10; retry++) {
   // 捕捉 'plugin-create' 錯誤時 → 等 50ms 繼續重試
 }
 ```
+
+**注意**：`fetchPromise` 須立刻附加 `.catch(() => {})`，避免 race 結束後 reject 成為 Unhandled Promise Rejection。
 
 ---
 
@@ -84,10 +91,17 @@ require('os')    // tmpdir()
 
 ## addFromPath 副本模式
 
-插件**無法直接覆蓋原始檔**。工作流程必須是：
+插件**無法直接覆蓋原始檔**。工作流程：
 1. Canvas 燒入 → 輸出到 `os.tmpdir()` 暫存檔
-2. `eagle.item.addFromPath(tmp, { name, tags, folders })` → 加入圖庫為新項目
+2. `eagle.item.addFromPath(tmp, { name, annotation, tags, folders })` → 加入圖庫為新項目
 3. `cleanupTemp(tmp)` → 刪除暫存檔
+
+**v1.7.0 檔名邏輯**：
+```js
+const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
+    .replace(/[\/\\:*?"<>|]/g, '_');
+const newName = `${origBase}_${fileSuffix}`;
+```
 
 ---
 
@@ -99,3 +113,4 @@ require('os')    // tmpdir()
 | TIFF 加入 SUPPORTED_EXT | 移除，Canvas 無法載入 |
 | 未 await addFromPath | 必須 await，否則 tmp 檔案提早被刪除 |
 | getSelected 不設 timeout | 加 Promise.race + 2000ms timeout |
+| addFromPath 未傳 folders | 必須傳 `folders: item.folders`，否則副本不在原始資料夾 |

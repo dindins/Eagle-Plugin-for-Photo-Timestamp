@@ -1,6 +1,11 @@
-# Skill: 版本號更新流程
+---
+name: version-bump
+description: This skill should be used when the user asks to "bump version", "update version number", "release new version", "update changelog", "publish release", or needs guidance on the 3-file version sync protocol (manifest.json, changelog.md, README.md) for the Eagle Timestamp Plugin.
+---
 
-當使用者要求發布新版本、更新 changelog 或升版號時使用。
+# 版本號更新流程
+
+發布新版本、更新 changelog 或升版號時使用。
 
 ---
 
@@ -58,9 +63,9 @@
 
 ---
 
-## 今日日期
+## 日期
 
-使用 `2026-02-22`（或從系統取得，若使用者明確指定則遵從）
+使用當天日期（格式 `YYYY-MM-DD`），若使用者明確指定則遵從。
 
 ---
 

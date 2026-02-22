@@ -1,6 +1,11 @@
-# Skill: Bug 稽核清單
+---
+name: bug-audit
+description: This skill should be used when the user asks to "audit the plugin", "check for regressions", "full feature check", "verify plugin functionality", "run bug checklist", or suspects regression issues in the Eagle Timestamp Plugin. Provides a comprehensive checklist for systematic verification of all critical code paths.
+---
 
-當使用者要求全面檢查插件功能、或懷疑有 regression 時使用。逐項檢查以下清單。
+# Bug 稽核清單
+
+全面檢查插件功能或懷疑有 regression 時，逐項檢查以下清單。
 
 ---
 
@@ -53,11 +58,11 @@ all = window._startupItems;
 window._startupItems = null; // 用完就清，否則 refresh 拿到舊快取
 ```
 
-### `isRefreshing` / `isApplying` 必須在 finally 中重置
+### `State.refreshing` / `State.applying` 必須在 finally 中重置
 ```js
-// ✅
+// ✅ v1.6.9+ 使用 State 物件
 finally {
-    isRefreshing = false;  // or isApplying = false
+    State.refreshing = false;  // or State.applying = false
 }
 ```
 
@@ -75,13 +80,21 @@ finally {
 .replace('MM', ...)
 ```
 
-### shadow 重置
+### shadow 重置（在 finally 區塊中）
 ```js
 // drawTimestampToContext() 繪製完文字後必須重置：
-ctx.shadowColor = 'transparent';
-ctx.shadowBlur = 0;
-ctx.shadowOffsetX = 0;
-ctx.shadowOffsetY = 0;
+finally {
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+}
+```
+
+### `ctx.setTransform` 重置（防止 DPI 累積偏移）
+```js
+// drawTimestampToContext() 開頭必須呼叫：
+ctx.setTransform(1, 0, 0, 1, 0, 0);
 ```
 
 ---
@@ -136,7 +149,37 @@ const SUPPORTED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']
 
 | 旗標 | 用途 | 需在哪裡重置 |
 |------|------|------------|
-| `isApplying` | 燒入中 | `applyTimestamps()` finally |
-| `isRefreshing` | 正在 getSelected | `refreshSelection()` finally |
-| `applyCancelled` | 使用者取消 | `applyTimestamps()` 開始時設 false |
+| `State.applying` | 燒入中 | `applyTimestamps()` finally |
+| `State.refreshing` | 正在 getSelected | `refreshSelection()` finally |
+| `State.cancelled` | 使用者取消 | `applyTimestamps()` 開始時設 false |
 | `_isLoading` | 載入設定中 | `loadSettings()` finally |
+
+---
+
+## 九、v1.7.0 新增檢查項目
+
+### localStorage 遷移（paddingX/paddingY）
+```js
+// loadSettings() 中 JSON.parse 後須立即處理：
+if (opts.padding !== undefined && opts.paddingX === undefined) {
+    opts.paddingX = opts.padding;
+    opts.paddingY = opts.padding;
+}
+// 使用 !== undefined 確保 padding: 0 也能正確遷移
+```
+
+### `calcPos()` 向後相容
+```js
+// 第五參數 marginY 預設 fallback 到 marginX
+function calcPos(pos, W, H, marginX, marginY) {
+    if (marginY === undefined) marginY = marginX;
+    // ...
+}
+```
+
+### 檔名後綴消毒
+```js
+// 特殊字元必須替換，避免檔案系統錯誤
+const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
+    .replace(/[\/\\:*?"<>|]/g, '_');
+```
