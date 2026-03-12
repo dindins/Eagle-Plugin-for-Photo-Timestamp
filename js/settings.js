@@ -28,6 +28,13 @@ const Settings = (() => {
             paddingX: parseInt(document.getElementById('paddingX').value, 10),
             paddingY: parseInt(document.getElementById('paddingY').value, 10),
             suffix: (document.getElementById('suffixInput')?.value || '').trim(),
+            tagOriginalEnabled: !!document.getElementById('tagOriginalEnabled')?.checked,
+            originalTag: (document.getElementById('originalTagInput')?.value || '').trim(),
+            newPhotoUseOriginalTags: !!document.getElementById('newPhotoUseOriginalTags')?.checked,
+            tagGeneratedEnabled: !!document.getElementById('tagGeneratedEnabled')?.checked,
+            generatedTag: (document.getElementById('generatedTagInput')?.value || '').trim(),
+            namePattern: (document.getElementById('namePatternInput')?.value || '').trim(),
+            batchTokenLength: parseInt(document.getElementById('batchTokenLengthInput')?.value, 10) || 6,
             shadow: document.querySelector('.toggle-btn.active[data-shadow]')?.dataset.shadow !== 'off',
         };
     }
@@ -162,6 +169,36 @@ const Settings = (() => {
                 if (suffixEl) suffixEl.value = opts.suffix;
             }
 
+            // 還原 TAG 設定
+            if (opts.tagOriginalEnabled !== undefined) {
+                const el = document.getElementById('tagOriginalEnabled');
+                if (el) el.checked = !!opts.tagOriginalEnabled;
+            }
+            if (opts.originalTag !== undefined) {
+                const el = document.getElementById('originalTagInput');
+                if (el) el.value = opts.originalTag;
+            }
+            if (opts.newPhotoUseOriginalTags !== undefined) {
+                const el = document.getElementById('newPhotoUseOriginalTags');
+                if (el) el.checked = !!opts.newPhotoUseOriginalTags;
+            }
+            if (opts.tagGeneratedEnabled !== undefined) {
+                const el = document.getElementById('tagGeneratedEnabled');
+                if (el) el.checked = !!opts.tagGeneratedEnabled;
+            }
+            if (opts.generatedTag !== undefined) {
+                const el = document.getElementById('generatedTagInput');
+                if (el) el.value = opts.generatedTag;
+            }
+            if (opts.namePattern !== undefined) {
+                const el = document.getElementById('namePatternInput');
+                if (el) el.value = opts.namePattern;
+            }
+            if (opts.batchTokenLength !== undefined) {
+                const el = document.getElementById('batchTokenLengthInput');
+                if (el) el.value = Math.min(Math.max(parseInt(opts.batchTokenLength, 10) || 6, 4), 12);
+            }
+
             // 還原其它設定
             const elementMap = {
                 fontSize: opts.fontSize,
@@ -275,6 +312,16 @@ const Settings = (() => {
                 if (isNaN(val) || val < 1) fsInput.value = 1;
                 else if (val > 20) fsInput.value = 20;
                 fsSlider.value = fsInput.value;
+            });
+        }
+
+        const tokenLenInput = document.getElementById('batchTokenLengthInput');
+        if (tokenLenInput) {
+            tokenLenInput.addEventListener('change', () => {
+                let val = parseInt(tokenLenInput.value, 10);
+                if (isNaN(val) || val < 4) val = 4;
+                if (val > 12) val = 12;
+                tokenLenInput.value = String(val);
             });
         }
     }
