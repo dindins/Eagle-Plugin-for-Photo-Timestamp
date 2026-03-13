@@ -88,6 +88,7 @@ const AUTO_RETRY_DELAY_MS = 3000;
 const PREVIEW_DEBOUNCE_MS = 150;
 const FIRST_SHOW_DELAY_MS = 1000;
 const FILE_NAME_MAX_LENGTH = 20;
+const FILE_NAME_BASE_MAX_LENGTH = 200; // 燒印後檔名基底最大字元數（留空間給副檔名）
 
 // ── 自動重試計時器（供 refreshSelection 取消用） ──
 let _autoRetryTimer = null;
@@ -412,6 +413,100 @@ async function refreshSelection(passedItems = null) {
     }
 }
 
+function getPrimaryFolder(item) {
+    if (!item || !Array.isArray(item.folders) || item.folders.length === 0) return [];
+    return [item.folders[0]];
+}
+
+function mergeTags(originalTags, extraTag) {
+    const merged = new Set(Array.isArray(originalTags) ? originalTags : []);
+    if (extraTag) merged.add(extraTag);
+    return Array.from(merged);
+}
+
+function buildGeneratedTags(item, opts) {
+    let result = opts.newPhotoUseOriginalTags ? (item.tags || []) : [];
+    if (opts.tagGeneratedEnabled && opts.generatedTag) {
+        result = mergeTags(result, opts.generatedTag);
+    } else {
+        result = Array.from(new Set(Array.isArray(result) ? result : []));
+    }
+    return result;
+}
+
+async function appendTagToOriginalItemIfNeeded(item, opts) {
+    if (!opts.tagOriginalEnabled || !opts.originalTag) return;
+    const mergedTags = mergeTags(item.tags, opts.originalTag);
+    const hasChanged = JSON.stringify(mergedTags) !== JSON.stringify(item.tags || []);
+    if (!hasChanged) return;
+
+    if (!item || !item.id) return;
+
+    if (window.eagle?.item && typeof eagle.item.update === 'function') {
+        await eagle.item.update(item.id, { tags: mergedTags });
+        return;
+    }
+
+    if (window.eagle?.item && typeof eagle.item.modify === 'function') {
+        await eagle.item.modify(item.id, { tags: mergedTags });
+        return;
+    }
+
+    if (window.eagle?.item && typeof eagle.item.set === 'function') {
+        await eagle.item.set(item.id, { tags: mergedTags });
+        return;
+    }
+
+    _log.warn('[TimestampTool] 略過原始照片 TAG 更新：找不到可用的 Eagle item 更新 API');
+}
+
+function createBatchToken(len = 6) {
+    const safeLen = Math.min(Math.max(parseInt(len, 10) || 6, 4), 12);
+    const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return token.slice(0, safeLen);
+}
+
+function buildStampedBaseName(origBase, fileSuffix, opts) {
+    const pattern = (opts.namePattern || '{name}_{suffix}_{token}').trim() || '{name}_{suffix}_{token}';
+    const batchToken = createBatchToken(opts.batchTokenLength);
+
+    // 計算排除 {name} 後的固定長度，確保最終基底名稱不超過 FILE_NAME_BASE_MAX_LENGTH
+    const fixedPart = pattern
+        .replace(/\{name\}/g, '')
+        .replace(/\{suffix\}/g, fileSuffix)
+        .replace(/\{token\}/g, batchToken)
+        .replace(/[\/\\:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const maxNameLen = Math.max(FILE_NAME_BASE_MAX_LENGTH - fixedPart.length, 10);
+    const safeOrigBase = origBase.length > maxNameLen ? origBase.slice(0, maxNameLen) : origBase;
+
+    return pattern
+        .replace(/\{name\}/g, safeOrigBase)
+        .replace(/\{suffix\}/g, fileSuffix)
+        .replace(/\{token\}/g, batchToken)
+        .replace(/[\/\\:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim() || `${safeOrigBase}_${fileSuffix}_${batchToken}`;
+}
+
+async function addStampedItemWithUniqueName(tmpPath, payload) {
+    const { baseName, annotation, tags, folders } = payload;
+    const MAX_TRIES = 20;
+    for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+        const suffix = attempt === 0 ? '' : `_${attempt + 1}`;
+        const name = `${baseName}${suffix}`;
+        try {
+            await eagle.item.addFromPath(tmpPath, { name, annotation, tags, folders });
+            return;
+        } catch (e) {
+            const msg = String(e && e.message ? e.message : e);
+            const isNameConflict = /exist|duplicate|重複|已存在|same name/i.test(msg);
+            if (!isNameConflict || attempt === MAX_TRIES - 1) throw e;
+        }
+    }
+}
+
 // ── 套用流程 ──────────────────────────────
 async function applyTimestamps() {
     if (!State.pluginCreated) return;
@@ -460,14 +555,16 @@ async function applyTimestamps() {
                 // 取得後綴：優先使用者自訂，否則自動產生日期
                 const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
                     .replace(/[\/\\:*?"<>|]/g, '_');
-                const newName = `${origBase}_${fileSuffix}`;
+                const newBaseName = buildStampedBaseName(origBase, fileSuffix, opts);
 
-                await eagle.item.addFromPath(tmpPath, {
-                    name: newName,
+                await addStampedItemWithUniqueName(tmpPath, {
+                    baseName: newBaseName,
                     annotation: `[時間戳記:${fileSuffix}] 原始檔案：${nodePath.basename(filePath)}`,
-                    tags: item.tags || [],
-                    folders: item.folders || [],
+                    tags: buildGeneratedTags(item, opts),
+                    folders: getPrimaryFolder(item),
                 });
+
+                await appendTagToOriginalItemIfNeeded(item, opts);
 
                 success++;
             } catch (e) {
