@@ -1,5 +1,22 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
+## [1.8.0] - 2026-03-13
+
+### 新增 (Added)
+- **原始照片 TAG 設定**：套用後可自動為原始照片新增指定 TAG（勾選啟用 + 輸入 TAG 名稱）
+- **新生成照片 TAG 設定**：可選擇繼承原始照片所有 TAG，並額外附加自訂 TAG
+- **自訂檔名命名模式**：支援 `{name}`、`{suffix}`、`{token}` 三個變數，預設格式 `{name}_{suffix}_{token}`；留空自動回退預設值
+- **批次 Token 長度可調**：Token 長度設定範圍 4~12 字元（預設 6），各批次唯一，用於防止批次衝突
+
+### 修復 (Fixed)
+- **檔名長度上限防護**：`buildStampedBaseName` 加入 `FILE_NAME_BASE_MAX_LENGTH = 200` 上限；先計算 `{suffix}` + `{token}` + 分隔符的固定長度，再截斷 `{name}` 以確保整體不超過 200 字元，`{suffix}` 與 `{token}` 永遠不被截斷
+- **檔名衝突自動重試**：`addStampedItemWithUniqueName` 最多重試 20 次，自動在尾端附加 `_2`、`_3`...
+
+### 變更 (Changed)
+- 副本僅放入原始照片的**第一個資料夾**（`getPrimaryFolder`），避免在多資料夾情境下產生非預期的重複副本
+
+---
+
 ## [1.7.0] - 2026-02-23
 
 ### 新增 (Added)

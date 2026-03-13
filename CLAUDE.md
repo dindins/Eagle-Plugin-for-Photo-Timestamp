@@ -24,25 +24,47 @@ Eagle 4 Window Plugin，為照片燒入視覺化時間戳記。Chromium 107 + No
 └── prompt_for_next_session.md  AI handoff guide
 ```
 
-## v1.7.0 Key Patterns
+## v1.8.0 Key Patterns
 
-### Separate X/Y Padding
+### Separate X/Y Padding (v1.7.0)
 - `calcPos(pos, W, H, marginX, marginY)` — 5 params, marginY fallback to marginX
 - `drawTimestampToContext()` uses `??` chain: `paddingX ?? padding ?? 3`
 - Settings: `paddingX`/`paddingY` sliders (default 3%), old `padding` auto-migrates in `loadSettings()`
 
-### Custom Filename Suffix
+### Custom Filename Suffix (v1.7.0)
 - `suffixInput` text field → `getAll().suffix` (trimmed)
 - Empty → auto-generate `YYYY-MM-DD` via `TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD')`
 - Sanitized: `.replace(/[\/\\:*?"<>|]/g, '_')`
-- Output: `origName_suffix.ext`, annotation `[時間戳記:suffix]`
+
+### Naming Pattern & Batch Token (v1.8.0)
+- `namePatternInput` → `opts.namePattern` (default `{name}_{suffix}_{token}`)
+- `batchTokenLengthInput` → `opts.batchTokenLength` (clamped 4~12, default 6)
+- `createBatchToken(len)` — Math.random + Date.now, sliced to len
+- `buildStampedBaseName(origBase, fileSuffix, opts)`:
+  - Compute `fixedPart` (pattern with `{name}` removed, suffix+token filled)
+  - `maxNameLen = max(FILE_NAME_BASE_MAX_LENGTH - fixedPart.length, 10)`
+  - Truncate `origBase` to `maxNameLen` before substitution
+  - `FILE_NAME_BASE_MAX_LENGTH = 200`
+
+### TAG Management (v1.8.0)
+- `tagOriginalEnabled` + `originalTagInput` → add TAG to original item after stamp
+- `newPhotoUseOriginalTags` → inherit original item's tags for new photo
+- `tagGeneratedEnabled` + `generatedTagInput` → append extra TAG to new photo
+- `appendTagToOriginalItemIfNeeded(item, opts)` — tries `update` → `modify` → `set` (3-layer fallback)
+- `buildGeneratedTags(item, opts)` — merges original tags + extra tag via Set dedup
+- `getPrimaryFolder(item)` — returns `[item.folders[0]]` only (design decision)
+
+### Conflict-Safe File Addition (v1.8.0)
+- `addStampedItemWithUniqueName(tmpPath, payload)` — retries up to 20 times
+- Conflict detection: `/exist|duplicate|重複|已存在|same name/i` on error message
+- On conflict: appends `_2`, `_3`, ... to baseName
 
 ## Critical Rules
 
 ### Eagle API Constraints
 - `item.filePath`, `item.name` etc. are READ-ONLY getters - never assign
 - Use `eagle.item.addFromPath(path, options)` to create copies (2-arg format)
-- `addFromPath` options MUST include `folders: item.folders` to keep in same folder
+- `addFromPath` uses `getPrimaryFolder(item)` → only first folder (design decision, not a bug)
 - `getSelected()` may timeout on startup - use Promise.race + retry pattern
 - TIFF not supported (Chromium Canvas limitation)
 - Supported formats: .jpg .jpeg .png .webp .gif .bmp
@@ -54,10 +76,11 @@ Eagle 4 Window Plugin，為照片燒入視覺化時間戳記。Chromium 107 + No
 - `eagle.plugin.closeDevTools()` after init
 
 ### Version Bump Protocol
-Every version change MUST sync 3 files:
+Every version change MUST sync 4 files:
 1. `manifest.json` -> `"version"`
 2. `changelog.md` -> new section at top
 3. `README.md` -> line 3 version string
+4. `prompt_for_next_session.md` -> header version + feature list
 
 ### Bug Prevention Checklist
 - `autoFillDate()`: ONLY call when `getTimeSource() === 'original'` (3 locations)
@@ -70,6 +93,8 @@ Every version change MUST sync 3 files:
 - `loadSettings()` migration: check `opts.padding !== undefined && opts.paddingX === undefined`
 - `calcPos()` backward compat: `if (marginY === undefined) marginY = marginX`
 - Suffix sanitization: must strip `\/\\:*?"<>|` before use in filename
+- `buildStampedBaseName`: compute fixedPart length FIRST, then truncate origBase (token/suffix must never be cut)
+- TAG comparison: `JSON.stringify(mergedTags) !== JSON.stringify(item.tags || [])` — order-sensitive, safe because mergeTags preserves insertion order
 
 ### Skills (in .claude/skills/)
 | Skill | When to Use |

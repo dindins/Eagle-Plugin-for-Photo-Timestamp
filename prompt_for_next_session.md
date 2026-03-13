@@ -1,6 +1,6 @@
 # Eagle Timestamp Plugin — 下次 Session 接手指南
 
-> 最後更新：2026-02-22 ｜ 版本：1.6.3
+> 最後更新：2026-03-13 ｜ 版本：1.8.0
 
 ---
 
@@ -9,7 +9,7 @@
 
 ---
 
-## 目前版本：1.6.3
+## 目前版本：1.8.0
 
 完整功能列表：
 - 多圖預覽，`←` / `→` 鍵或按鈕切換
@@ -20,7 +20,12 @@
 - 批次套用 + 取消按鈕 + 進度顯示檔名
 - EXIF 來源徽章（原始照片模式）
 - 空預覽佔位提示
-- 偶發性 `Uncaught (in promise)` 防護（`fetchPromise.catch(() => {})` + `timeoutId` 外層宣告清理）
+- **自訂檔名後綴**（留空自動產生日期）
+- **分離 X/Y 邊距**（paddingX / paddingY）
+- **TAG 管理**：原始照片 TAG、新生成照片繼承/附加 TAG
+- **自訂命名模式**：`{name}_{suffix}_{token}`，Token 長度 4~12
+- **檔名衝突重試**（最多 20 次）
+- **檔名長度上限**（基底名稱 200 字元）
 
 ---
 
@@ -56,20 +61,24 @@ EAGLE Plugin/
 - `getSelected()` 可能 timeout → 已加 retry + 2秒 timeout 保護
 - **不支援 TIFF**（Chromium Canvas 限制）
 - 支援：`.jpg .jpeg .png .webp .gif .bmp`
+- TAG 更新：優先嘗試 `eagle.item.update` → `modify` → `set`，三層 fallback
 
 ---
 
 ## 關鍵狀態變數
 
-### main.js
-| 變數 | 說明 |
+### main.js — State 物件
+| 屬性 | 說明 |
 |------|------|
-| `currentSelectedImages[]` | 過濾後圖片路徑陣列 |
-| `globalEagleItems[]` | Eagle Item 物件陣列 |
-| `currentPreviewIndex` | 目前預覽索引 |
-| `isApplying` | 燒入中旗標 |
-| `isRefreshing` | getSelected 旗標 |
-| `applyCancelled` | 使用者取消旗標 |
+| `State.images[]` | 過濾後圖片路徑陣列 |
+| `State.items[]` | Eagle Item 物件陣列 |
+| `State.previewIndex` | 目前預覽索引 |
+| `State.applying` | 燒入中旗標 |
+| `State.refreshing` | getSelected 旗標 |
+| `State.cancelled` | 使用者取消旗標 |
+| `State.hadExif` | 第一張圖是否有 EXIF |
+| `State.firstShowDone` | 首次 show 後不再延遲 |
+| `State.startupItems` | onItemSelectionChanged 快取 |
 
 ### settings.js
 | 變數 | 說明 |
@@ -79,34 +88,49 @@ EAGLE Plugin/
 
 ---
 
+## 主要函式（v1.8.0 新增）
+
+| 函式 | 說明 |
+|------|------|
+| `getPrimaryFolder(item)` | 取第一個資料夾，回傳 `[folders[0]]` |
+| `mergeTags(originalTags, extraTag)` | Set 合併，去重 |
+| `buildGeneratedTags(item, opts)` | 組裝新生成照片的 TAG 陣列 |
+| `appendTagToOriginalItemIfNeeded(item, opts)` | 有變更才呼叫 Eagle API 更新 TAG |
+| `createBatchToken(len)` | 隨機 Token，clamp 4~12 字元 |
+| `buildStampedBaseName(origBase, fileSuffix, opts)` | 依命名模式組裝檔名，限 200 字元 |
+| `addStampedItemWithUniqueName(tmpPath, payload)` | 最多重試 20 次，衝突自動加 `_2`... |
+
+---
+
 ## 跨模組通信
 
 ```js
-window.onSettingsChanged = updatePreview;        // settings → main：設定變更時重繪
-window.onTimeSourceChanged = (source) => { ... }; // settings → main：模式切換時通知
+window.TimestampPlugin.onSettingsChanged = updatePreview;     // settings → main：設定變更重繪
+window.TimestampPlugin.onTimeSourceChanged = (source) => {}; // settings → main：模式切換通知
 ```
 
 ---
 
 ## 已知 Bug 模式（勿重犯）
 
-1. **`Promise.race` 中 `fetchPromise` 未加 `.catch()`** → timeout 後 fetchPromise 若仍 reject 成為 Unhandled Promise Rejection；需在建立後立刻執行 `fetchPromise.catch(() => {})`
-2. **`timeoutId` 宣告於 `try {}` 內部** → `catch` 無法存取，retry 迴圈每輪都洩漏一個 timer；必須宣告於 `try-catch` 外層
+1. **`Promise.race` 中 `fetchPromise` 未加 `.catch()`** → Unhandled Promise Rejection
+2. **`timeoutId` 宣告於 `try {}` 內部** → `catch` 無法 clearTimeout，timer 洩漏
 3. **`autoFillDate()` 被非 original 模式呼叫** → 條件必須是 `=== 'original'`
-4. **`_startupItems` 用後未清** → 需設 `null`
+4. **`State.startupItems` 用後未清** → 需設 `null`
 5. **`_savedManualDatetime` 未在 `btn.click()` 前設好** → manual 模式切換後欄位空白
 6. **`formatDate()` 不用 `/g` flag** → 重複字元只替換一次
-7. **`fontSizeInput` JS max 與 HTML max 不一致** → 均應為 20
-8. **`<main>` 巢狀於 `<aside>`** → 改為 `<div>`
+7. **`buildStampedBaseName` 截斷邏輯順序錯誤** → 應先計算固定部分長度，再截 `{name}`
+8. **TAG 比較用 `JSON.stringify`** → 順序敏感，`mergeTags` 保插入順序，原始在前故可行
 
 ---
 
-## 版本更新三件套
+## 版本更新四件套
 
 每次升版必須同步：
 1. `manifest.json` → `"version"`
 2. `changelog.md` → 頂部新增 `## [x.x.x] - 日期`
 3. `README.md` → 第 3 行 `> 版本：x.x.x ｜ 日期`
+4. `prompt_for_next_session.md` → 標題版本與功能列表
 
 ---
 
@@ -130,7 +154,9 @@ burnTimestamp(filePath, opts)
   → loadImage()                    # Buffer → base64 → HTMLImageElement
   → drawTimestampToContext()       # 計算大小 → 繪製背景 → 繪製文字（含陰影）
   → canvas.toBlob() → writeFile() # 輸出暫存
-  → eagle.item.addFromPath()      # 加入圖庫
+  → buildStampedBaseName()        # 組裝檔名（含長度保護）
+  → addStampedItemWithUniqueName() # 加入圖庫（含衝突重試）
+  → appendTagToOriginalItemIfNeeded() # 更新原始照片 TAG
   → cleanupTemp()                 # 刪除暫存
 ```
 
@@ -149,3 +175,10 @@ burnTimestamp(filePath, opts)
 | `previewCanvas` | 即時預覽 |
 | `workCanvas` | 燒入工作畫布（不可見）|
 | `cancelApplyBtn` | 取消燒入 |
+| `tagOriginalEnabled` | 原始照片 TAG 啟用勾選框 |
+| `originalTagInput` | 原始照片 TAG 輸入框 |
+| `newPhotoUseOriginalTags` | 新照片繼承原始 TAG 勾選框 |
+| `tagGeneratedEnabled` | 新照片額外 TAG 啟用勾選框 |
+| `generatedTagInput` | 新照片額外 TAG 輸入框 |
+| `namePatternInput` | 命名模式輸入框 |
+| `batchTokenLengthInput` | Token 長度數字輸入框 |
