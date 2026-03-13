@@ -88,6 +88,7 @@ const AUTO_RETRY_DELAY_MS = 3000;
 const PREVIEW_DEBOUNCE_MS = 150;
 const FIRST_SHOW_DELAY_MS = 1000;
 const FILE_NAME_MAX_LENGTH = 20;
+const FILE_NAME_BASE_MAX_LENGTH = 200; // 燒印後檔名基底最大字元數（留空間給副檔名）
 
 // ── 自動重試計時器（供 refreshSelection 取消用） ──
 let _autoRetryTimer = null;
@@ -468,13 +469,25 @@ function createBatchToken(len = 6) {
 function buildStampedBaseName(origBase, fileSuffix, opts) {
     const pattern = (opts.namePattern || '{name}_{suffix}_{token}').trim() || '{name}_{suffix}_{token}';
     const batchToken = createBatchToken(opts.batchTokenLength);
-    return pattern
-        .replace(/\{name\}/g, origBase)
+
+    // 計算排除 {name} 後的固定長度，確保最終基底名稱不超過 FILE_NAME_BASE_MAX_LENGTH
+    const fixedPart = pattern
+        .replace(/\{name\}/g, '')
         .replace(/\{suffix\}/g, fileSuffix)
         .replace(/\{token\}/g, batchToken)
         .replace(/[\/\\:*?"<>|]/g, '_')
         .replace(/\s+/g, ' ')
-        .trim() || `${origBase}_${fileSuffix}_${batchToken}`;
+        .trim();
+    const maxNameLen = Math.max(FILE_NAME_BASE_MAX_LENGTH - fixedPart.length, 10);
+    const safeOrigBase = origBase.length > maxNameLen ? origBase.slice(0, maxNameLen) : origBase;
+
+    return pattern
+        .replace(/\{name\}/g, safeOrigBase)
+        .replace(/\{suffix\}/g, fileSuffix)
+        .replace(/\{token\}/g, batchToken)
+        .replace(/[\/\\:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim() || `${safeOrigBase}_${fileSuffix}_${batchToken}`;
 }
 
 async function addStampedItemWithUniqueName(tmpPath, payload) {
