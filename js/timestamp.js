@@ -306,9 +306,11 @@ async function burnTimestamp(filePath, opts) {
     const fs = require('fs');
     const path = require('path');
     const ext = getExt(filePath);
-    const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
+    const mime = MIME_MAP[ext] || 'image/jpeg';
+    // 確保暫存檔副檔名與實際輸出 MIME 一致
+    const outExt = mime === 'image/png' ? '.png' : '.jpg';
     const uniqueSuffix = Math.random().toString(36).substring(2, 8);
-    const tmp = path.join(os.tmpdir(), `eagle_ts_${Date.now()}_${uniqueSuffix}${ext}`);
+    const tmp = path.join(os.tmpdir(), `eagle_ts_${Date.now()}_${uniqueSuffix}${outExt}`);
 
     await new Promise((resolve, reject) => {
         canvas.toBlob((blob) => {

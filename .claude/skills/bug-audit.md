@@ -183,3 +183,45 @@ function calcPos(pos, W, H, marginX, marginY) {
 const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
     .replace(/[\/\\:*?"<>|]/g, '_');
 ```
+
+---
+
+## 十、v1.9.0 新增檢查項目
+
+### Flexbox 滾動鏈完整性
+```css
+/* 從最外層到滾動容器，每一層都需要高度限制 */
+.settings-panel { overflow: hidden; }  /* ✅ 限制高度 */
+.settings { min-height: 0; overflow-y: auto; }  /* ✅ 啟用滾動 */
+
+/* ❌ 如果中間任何一層缺少 overflow: hidden 或 min-height: 0，
+   滾動容器會被撐開，overflow-y: auto 永遠不觸發 */
+```
+
+### `appendTagToOriginalItemIfNeeded` 必須在獨立 try-catch 中
+```js
+// ✅ success++ 在 TAG 更新之前
+success++;
+try { await appendTagToOriginalItemIfNeeded(item, opts); }
+catch (tagErr) { _log.warn('TAG 更新失敗（照片已建立）:', tagErr); }
+
+// ❌ TAG 更新與照片創建共用 try-catch（v1.8.0 的錯誤）
+```
+
+### `getPrimaryFolder` fallback 必須是全部資料夾
+```js
+// ✅ 偵測失敗時放入所有資料夾（用戶一定看得到）
+return [...item.folders];
+
+// ❌ 只取第一個（可能不是用戶當前瀏覽的資料夾）
+return [item.folders[0]];
+```
+
+### `cleanupTemp` 必須延遲刪除
+```js
+// ✅ 延遲 3 秒
+setTimeout(() => TimestampEngine.cleanupTemp(_tmp), 3000);
+
+// ❌ 立即刪除（Eagle 可能仍在讀取暫存檔）
+TimestampEngine.cleanupTemp(tmpPath);
+```

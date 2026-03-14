@@ -14,6 +14,10 @@ const Settings = (() => {
         return window._log || { info: _stNoop, warn: _stNoop, error: _stNoop };
     }
 
+    // ── 折疊區段 ─────────────────────────────
+    const COLLAPSIBLE_IDS = ['sectionVisual', 'sectionTags', 'sectionFile'];
+    const SECTION_STORAGE_KEY = 'TimestampPluginSections';
+
     // ── 取得當前所有設定值 ──────────────
     function getAll(filePath = null) {
         return {
@@ -36,6 +40,8 @@ const Settings = (() => {
             namePattern: (document.getElementById('namePatternInput')?.value || '').trim(),
             batchTokenLength: parseInt(document.getElementById('batchTokenLengthInput')?.value, 10) || 6,
             shadow: document.querySelector('.toggle-btn.active[data-shadow]')?.dataset.shadow !== 'off',
+            annotationPattern: (document.getElementById('annotationPatternInput')?.value || '').trim()
+                || '[時間戳記:{suffix}] 原始檔案：{filename}',
         };
     }
 
@@ -50,7 +56,6 @@ const Settings = (() => {
             return val ? new Date(val) : new Date();
         }
         if (source === 'original' && filePath) {
-            // 使用 TimestampEngine 統一入口讀取日期
             if (window.TimestampEngine) {
                 return window.TimestampEngine.getDateForFile(filePath).date;
             }
@@ -61,6 +66,7 @@ const Settings = (() => {
 
     // ── 初始化所有控制項事件 ────────────
     function init() {
+        _initCollapsibleSections();
         _initTimeSourceToggle();
         _initSliders();
         _initPositionToggle();
@@ -90,16 +96,42 @@ const Settings = (() => {
         }
     }
 
+    // ── 折疊區段初始化與持久化 ────────────
+    function _initCollapsibleSections() {
+        let saved = {};
+        try {
+            const raw = localStorage.getItem(SECTION_STORAGE_KEY);
+            if (raw) saved = JSON.parse(raw);
+        } catch (_) {}
+
+        COLLAPSIBLE_IDS.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            // 預設折疊；若 saved 記錄為 true 則展開
+            if (saved[id] === true) el.open = true;
+            el.addEventListener('toggle', () => { _saveSectionStates(); });
+        });
+    }
+
+    function _saveSectionStates() {
+        const states = {};
+        COLLAPSIBLE_IDS.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) states[id] = el.open;
+        });
+        try {
+            localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(states));
+        } catch (_) {}
+    }
+
     // ── 儲存與讀取設定 (localStorage) ────
     function saveSettings() {
-        if (_isLoading) return; // 載入期間不覆蓋已儲存的設定
+        if (_isLoading) return;
         const opts = getAll();
         const currentInputVal = document.getElementById('manualDatetime').value;
-        // 只在手動模式下更新「使用者設定的日期」記憶
         if (getTimeSource() === 'manual') {
             _savedManualDatetime = currentInputVal;
         }
-        // 儲存手動日期記憶（而非 input 目前顯示的 EXIF / now 時間）
         const toSave = {
             ...opts,
             manualDatetime: _savedManualDatetime || currentInputVal,
@@ -125,27 +157,24 @@ const Settings = (() => {
                 opts.paddingY = opts.padding;
             }
 
-            // 先還原手動日期記憶，_applyTimeSourceDisplay('manual') 會用到它
+            // 先還原手動日期記憶
             if (opts.manualDatetime) {
                 _savedManualDatetime = opts.manualDatetime;
             }
 
-            // 還原時間來源（觸發 _applyTimeSourceDisplay，所以必須在 _savedManualDatetime 設好之後）
+            // 還原時間來源
             if (opts.timeSource) {
                 const btn = document.querySelector(`.toggle-btn[data-source="${opts.timeSource}"]`);
                 if (btn) btn.click();
             }
 
-            // 'now' 模式由 _applyTimeSourceDisplay 顯示當前時間，不覆蓋
-            // 其餘模式還原上次的顯示值（EXIF 日期 / 使用者手動值）
             if (opts.manualDatetime && opts.timeSource !== 'now') {
                 document.getElementById('manualDatetime').value = opts.manualDatetime;
             }
 
-            // 還原格式
             if (opts.format) document.getElementById('dateFormat').value = opts.format;
 
-            // 還原位置（舊版非底部位置 → 預設右下）
+            // 還原位置
             if (opts.position) {
                 const btn = document.querySelector(`.toggle-btn[data-pos="${opts.position}"]`);
                 if (btn) {
@@ -156,7 +185,7 @@ const Settings = (() => {
                 }
             }
 
-            // 還原陰影設定
+            // 還原陰影
             if (opts.shadow !== undefined) {
                 const shadowVal = opts.shadow === true ? 'on' : 'off';
                 const btn = document.querySelector(`.toggle-btn[data-shadow="${shadowVal}"]`);
@@ -199,6 +228,12 @@ const Settings = (() => {
                 if (el) el.value = Math.min(Math.max(parseInt(opts.batchTokenLength, 10) || 6, 4), 12);
             }
 
+            // 還原備註格式
+            if (opts.annotationPattern !== undefined) {
+                const el = document.getElementById('annotationPatternInput');
+                if (el) el.value = opts.annotationPattern;
+            }
+
             // 還原其它設定
             const elementMap = {
                 fontSize: opts.fontSize,
@@ -225,7 +260,7 @@ const Settings = (() => {
         }
     }
 
-    // 根據時間來源更新顯示區塊的標籤、提示與唯讀狀態
+    // 根據時間來源更新顯示區塊
     function _applyTimeSourceDisplay(source) {
         const input = document.getElementById('manualDatetime');
         const label = document.getElementById('timeDisplayLabel');
@@ -250,16 +285,14 @@ const Settings = (() => {
             if (label) label.textContent = '🕐 當前時間';
             if (hint) hint.textContent = '套用時以當下時間為準（每張照片獨立計算）';
             if (badge) { badge.textContent = ''; badge.className = 'exif-source-badge'; }
-        } else { // 'original'
+        } else {
             input.readOnly = true;
             input.classList.add('readonly');
             if (label) label.textContent = '📸 原始照片時間';
             if (hint) hint.textContent = '從 EXIF 或檔案資訊自動讀取，切換照片時會更新';
-            // badge 由 autoFillDate() 在 main.js 中更新
         }
     }
 
-    // 時間來源切換
     function _initTimeSourceToggle() {
         const btns = document.querySelectorAll('.toggle-btn[data-source]');
         btns.forEach(btn => {
@@ -267,7 +300,6 @@ const Settings = (() => {
                 btns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 _applyTimeSourceDisplay(btn.dataset.source);
-                // 通知 main.js 模式已切換（例如切回 original 時重新填入 EXIF 日期）
                 const ns = window.TimestampPlugin;
                 if (ns && ns.onTimeSourceChanged) {
                     ns.onTimeSourceChanged(btn.dataset.source);
@@ -275,14 +307,12 @@ const Settings = (() => {
             });
         });
 
-        // 根據預設 active 按鈕初始化顯示狀態
         const defaultActive = document.querySelector('.toggle-btn.active[data-source]');
         if (defaultActive) {
             _applyTimeSourceDisplay(defaultActive.dataset.source);
         }
     }
 
-    // 滑桿數值顯示與字型手動輸入
     function _initSliders() {
         const sliderMap = {
             bgOpacity: { badge: 'bgOpacityValue', suffix: '%' },
@@ -298,7 +328,6 @@ const Settings = (() => {
             update();
         });
 
-        // 獨立處理 fontSize (slider <-> number input 同步)
         const fsSlider = document.getElementById('fontSize');
         const fsInput = document.getElementById('fontSizeInput');
         if (fsSlider && fsInput) {
@@ -326,7 +355,6 @@ const Settings = (() => {
         }
     }
 
-    // 底部位置切換
     function _initPositionToggle() {
         const btns = document.querySelectorAll('.toggle-btn[data-pos]');
         btns.forEach(btn => {
@@ -337,7 +365,6 @@ const Settings = (() => {
         });
     }
 
-    // 文字陰影切換
     function _initShadowToggle() {
         const btns = document.querySelectorAll('.toggle-btn[data-shadow]');
         btns.forEach(btn => {

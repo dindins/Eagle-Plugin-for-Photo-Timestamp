@@ -107,6 +107,7 @@ const State = {
     firstShowDone: false,
     startupItems: null,   // onItemSelectionChanged 快取
     pluginRunArgs: null,
+    activeFolders: null,  // 用戶選定的目標資料夾 ID 集合（Set 或 null=全部）
 };
 
 // ── 模組通訊命名空間 ─────────────────────
@@ -385,6 +386,7 @@ async function refreshSelection(passedItems = null) {
             State.images = imgs.map(img => img.filePath || img.fileURL);
             State.items = imgs;
             State.previewIndex = 0;
+            updateActiveFolder(imgs).catch(() => {});
             updatePreviewControls();
 
             const firstImgPath = State.images[0];
@@ -413,9 +415,116 @@ async function refreshSelection(passedItems = null) {
     }
 }
 
-function getPrimaryFolder(item) {
+function getItemFolders(item) {
     if (!item || !Array.isArray(item.folders) || item.folders.length === 0) return [];
-    return [item.folders[0]];
+    if (State.activeFolders && State.activeFolders.size > 0) {
+        const filtered = item.folders.filter(f => State.activeFolders.has(f));
+        if (filtered.length > 0) return filtered;
+    }
+    return [...item.folders];
+}
+
+// ── 資料夾名稱快取 ──
+const _folderNameCache = {};
+
+function _fetchFolderNames(folderIds) {
+    return new Promise((resolve) => {
+        try {
+            const http = require('http');
+            const req = http.get('http://127.0.0.1:41595/api/folder/list', { timeout: 2000 }, (res) => {
+                let data = '';
+                res.on('data', c => { data += c; });
+                res.on('end', () => {
+                    try {
+                        const all = JSON.parse(data).data || [];
+                        const _walk = (folders) => {
+                            for (const f of folders) {
+                                _folderNameCache[f.id] = f.name;
+                                if (Array.isArray(f.children)) _walk(f.children);
+                            }
+                        };
+                        _walk(all);
+                    } catch (_) { }
+                    resolve();
+                });
+            });
+            req.on('error', () => resolve());
+            req.on('timeout', () => { req.destroy(); resolve(); });
+        } catch (_) { resolve(); }
+    });
+}
+
+/**
+ * 分析選取照片的資料夾，更新 UI 選擇器
+ * - 唯一資料夾 → 自動設定，不顯示選擇器
+ * - 多資料夾 → 顯示選擇器讓用戶點選
+ */
+async function updateActiveFolder(items) {
+    const picker = document.getElementById('folderPicker');
+    const btnsEl = document.getElementById('folderPickerBtns');
+    if (!picker || !btnsEl) return;
+
+    if (!items || items.length === 0) {
+        picker.style.display = 'none';
+        return;
+    }
+
+    // 收集所有照片的資料夾聯集
+    const allFolderIds = new Set();
+    for (const item of items) {
+        if (Array.isArray(item.folders)) {
+            item.folders.forEach(f => allFolderIds.add(f));
+        }
+    }
+
+    // 計算交集
+    let common = null;
+    for (const item of items) {
+        const fset = new Set(Array.isArray(item.folders) ? item.folders : []);
+        if (fset.size === 0) continue;
+        if (common === null) {
+            common = new Set(fset);
+        } else {
+            for (const f of common) {
+                if (!fset.has(f)) common.delete(f);
+            }
+        }
+    }
+
+    // 候選資料夾 = 交集（如果有）或聯集
+    const candidates = (common && common.size > 0) ? [...common] : [...allFolderIds];
+
+    if (candidates.length <= 1) {
+        State.activeFolders = candidates.length === 1 ? new Set(candidates) : null;
+        picker.style.display = 'none';
+        return;
+    }
+
+    // 多資料夾 → 取得名稱，顯示選擇器（預設全選）
+    await _fetchFolderNames(candidates);
+    State.activeFolders = new Set(candidates);
+
+    btnsEl.innerHTML = '';
+    candidates.forEach(fid => {
+        const btn = document.createElement('button');
+        btn.className = 'folder-pick-btn active'; // 預設全選
+        btn.textContent = _folderNameCache[fid] || fid.slice(0, 8);
+        btn.title = _folderNameCache[fid] || fid;
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('active')) {
+                // 取消選取（但至少保留一個）
+                if (State.activeFolders.size > 1) {
+                    State.activeFolders.delete(fid);
+                    btn.classList.remove('active');
+                }
+            } else {
+                State.activeFolders.add(fid);
+                btn.classList.add('active');
+            }
+        });
+        btnsEl.appendChild(btn);
+    });
+    picker.style.display = 'flex';
 }
 
 function mergeTags(originalTags, extraTag) {
@@ -434,30 +543,62 @@ function buildGeneratedTags(item, opts) {
     return result;
 }
 
+/**
+ * 透過 Eagle HTTP API 更新原始照片 TAG（Node.js http 模組，無 CORS 限制）
+ * 帶 3 秒 timeout 避免卡住
+ */
+function _eagleHttpUpdate(itemId, tags) {
+    return new Promise((resolve) => {
+        try {
+            const http = require('http');
+            const body = JSON.stringify({ id: itemId, tags });
+            const req = http.request({
+                hostname: '127.0.0.1',
+                port: 41595,
+                path: '/api/item/update',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+                timeout: 1500,
+            }, (res) => {
+                let data = '';
+                res.on('data', c => { data += c; });
+                res.on('end', () => resolve(res.statusCode >= 200 && res.statusCode < 300));
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => { req.destroy(); resolve(false); });
+            req.write(body);
+            req.end();
+        } catch (_) { resolve(false); }
+    });
+}
+
 async function appendTagToOriginalItemIfNeeded(item, opts) {
     if (!opts.tagOriginalEnabled || !opts.originalTag) return;
-    const mergedTags = mergeTags(item.tags, opts.originalTag);
-    const hasChanged = JSON.stringify(mergedTags) !== JSON.stringify(item.tags || []);
-    if (!hasChanged) return;
-
     if (!item || !item.id) return;
 
-    if (window.eagle?.item && typeof eagle.item.update === 'function') {
-        await eagle.item.update(item.id, { tags: mergedTags });
-        return;
-    }
+    const tagToAdd = opts.originalTag.trim();
+    if (!tagToAdd) return;
 
-    if (window.eagle?.item && typeof eagle.item.modify === 'function') {
-        await eagle.item.modify(item.id, { tags: mergedTags });
-        return;
-    }
+    const existing = Array.isArray(item.tags) ? item.tags : [];
+    if (existing.includes(tagToAdd)) return;
 
-    if (window.eagle?.item && typeof eagle.item.set === 'function') {
-        await eagle.item.set(item.id, { tags: mergedTags });
-        return;
-    }
+    const newTags = [...existing, tagToAdd];
 
-    _log.warn('[TimestampTool] 略過原始照片 TAG 更新：找不到可用的 Eagle item 更新 API');
+    // 直接用 Eagle HTTP API（Plugin API 的 eagle.item.update 可能 hang，已驗證 HTTP 可靠）
+    const ok = await _eagleHttpUpdate(item.id, newTags);
+    if (ok) return;
+
+    _log.warn('[TimestampTool] TAG 更新失敗：item.id=' + item.id);
+}
+
+function buildAnnotation(pattern, vars) {
+    if (!pattern) pattern = '[時間戳記:{suffix}] 原始檔案：{filename}';
+    return pattern
+        .replace(/\{suffix\}/g, vars.suffix || '')
+        .replace(/\{filename\}/g, vars.filename || '')
+        .replace(/\{name\}/g, vars.name || '')
+        .replace(/\{date\}/g, vars.date || '')
+        .replace(/\{format\}/g, vars.format || '');
 }
 
 function createBatchToken(len = 6) {
@@ -466,9 +607,9 @@ function createBatchToken(len = 6) {
     return token.slice(0, safeLen);
 }
 
-function buildStampedBaseName(origBase, fileSuffix, opts) {
+function buildStampedBaseName(origBase, fileSuffix, opts, batchToken) {
     const pattern = (opts.namePattern || '{name}_{suffix}_{token}').trim() || '{name}_{suffix}_{token}';
-    const batchToken = createBatchToken(opts.batchTokenLength);
+    if (!batchToken) batchToken = createBatchToken(opts.batchTokenLength);
 
     // 計算排除 {name} 後的固定長度，確保最終基底名稱不超過 FILE_NAME_BASE_MAX_LENGTH
     const fixedPart = pattern
@@ -532,6 +673,11 @@ async function applyTimestamps() {
     let fail = 0;
 
     try {
+        // 同一批次共用 token，避免每張照片產生不同 token
+        const batchToken = createBatchToken(
+            parseInt(document.getElementById('batchTokenLengthInput')?.value, 10) || 6
+        );
+
         for (let i = 0; i < items.length; i++) {
             if (State.cancelled) break;
 
@@ -555,25 +701,40 @@ async function applyTimestamps() {
                 // 取得後綴：優先使用者自訂，否則自動產生日期
                 const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
                     .replace(/[\/\\:*?"<>|]/g, '_');
-                const newBaseName = buildStampedBaseName(origBase, fileSuffix, opts);
+                const newBaseName = buildStampedBaseName(origBase, fileSuffix, opts, batchToken);
 
                 await addStampedItemWithUniqueName(tmpPath, {
                     baseName: newBaseName,
-                    annotation: `[時間戳記:${fileSuffix}] 原始檔案：${nodePath.basename(filePath)}`,
+                    annotation: buildAnnotation(opts.annotationPattern, {
+                        suffix: fileSuffix,
+                        filename: nodePath.basename(filePath),
+                        name: origBase,
+                        date: TimestampEngine.formatDate(opts.date, opts.format),
+                        format: opts.format,
+                    }),
                     tags: buildGeneratedTags(item, opts),
-                    folders: getPrimaryFolder(item),
+                    folders: getItemFolders(item),
                 });
 
-                await appendTagToOriginalItemIfNeeded(item, opts);
-
                 success++;
+
+                // TAG 更新獨立 try-catch：失敗不影響照片創建的成功計數
+                try {
+                    await appendTagToOriginalItemIfNeeded(item, opts);
+                } catch (tagErr) {
+                    _log.warn('[TimestampTool] TAG 更新失敗（照片已建立）:', tagErr);
+                }
             } catch (e) {
                 _log.error('[TimestampTool] 處理失敗:', filePath, e);
                 setStatus(`第 ${i + 1} 張失敗：${e.message}`, false);
                 fail++;
                 await new Promise(r => setTimeout(r, 1500));
             } finally {
-                if (tmpPath) TimestampEngine.cleanupTemp(tmpPath);
+                // 延遲刪除暫存檔，確保 Eagle 完成檔案讀取
+                if (tmpPath) {
+                    const _tmp = tmpPath;
+                    setTimeout(() => TimestampEngine.cleanupTemp(_tmp), 3000);
+                }
             }
         }
     } finally {
@@ -664,6 +825,42 @@ eagle.onPluginCreate((plugin) => {
             navigateToPreview(State.previewIndex + 1);
         }
     });
+
+    // 設定面板滾動修復（不依賴 flexbox，直接用 JS 計算高度）
+    try {
+        const _panel = document.querySelector('.settings-panel');
+        const _footer = document.querySelector('.footer');
+        const _settings = document.querySelector('.settings');
+        if (_panel && _footer && _settings) {
+            const fixHeight = () => {
+                const avail = _panel.clientHeight - _footer.offsetHeight;
+                if (avail > 0) {
+                    _settings.style.height = avail + 'px';
+                    _settings.style.maxHeight = avail + 'px';
+                }
+            };
+
+            // 初始 + 延遲再算一次（確保 Eagle 視窗初始化完成）
+            fixHeight();
+            setTimeout(fixHeight, 300);
+            setTimeout(fixHeight, 1000);
+
+            // 視窗大小變化時重新計算
+            window.addEventListener('resize', fixHeight);
+
+            // 折疊區段：展開時自動滾動到該區段
+            document.querySelectorAll('details.collapsible').forEach(d => {
+                d.addEventListener('toggle', () => {
+                    setTimeout(() => {
+                        fixHeight();
+                        if (d.open) {
+                            d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    }, 50);
+                });
+            });
+        }
+    } catch (_) { }
 
     // UI 初始化完畢，顯示空狀態
     setStatus('【請直接在 Eagle 點選您要的照片！】', false);

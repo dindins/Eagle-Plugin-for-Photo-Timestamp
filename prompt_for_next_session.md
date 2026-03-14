@@ -1,6 +1,6 @@
 # Eagle Timestamp Plugin — 下次 Session 接手指南
 
-> 最後更新：2026-03-13 ｜ 版本：1.8.0
+> 最後更新：2026-03-14 ｜ 版本：1.9.0
 
 ---
 
@@ -9,23 +9,22 @@
 
 ---
 
-## 目前版本：1.8.0
+## 目前版本：1.9.0
 
 完整功能列表：
 - 多圖預覽，`←` / `→` 鍵或按鈕切換
 - 時間來源三模式：原始照片時間 / 當前時間 / 統一自訂時間
 - 所有模式皆顯示時間欄位（readonly 或可編輯）
+- **可折疊設定面板**：主要設定永遠展開 + 三個可折疊區段（視覺微調 / TAG / 新檔案）
+- **自訂備註格式**：`{suffix}` `{filename}` `{name}` `{date}` `{format}` 五個變數
+- **智慧資料夾偵測**：Eagle API → 交集法 → 全部資料夾回退
 - 底部位置三選（左 / 中 / 右）
 - 文字陰影開關
 - 批次套用 + 取消按鈕 + 進度顯示檔名
 - EXIF 來源徽章（原始照片模式）
-- 空預覽佔位提示
-- **自訂檔名後綴**（留空自動產生日期）
-- **分離 X/Y 邊距**（paddingX / paddingY）
-- **TAG 管理**：原始照片 TAG、新生成照片繼承/附加 TAG
-- **自訂命名模式**：`{name}_{suffix}_{token}`，Token 長度 4~12
-- **檔名衝突重試**（最多 20 次）
-- **檔名長度上限**（基底名稱 200 字元）
+- 自訂檔名後綴 / 命名模式 / Token 長度
+- TAG 管理：原始照片 TAG、新生成照片繼承/附加 TAG
+- 檔名衝突重試（最多 20 次）/ 檔名長度上限（200 字元）
 
 ---
 
@@ -61,7 +60,7 @@ EAGLE Plugin/
 - `getSelected()` 可能 timeout → 已加 retry + 2秒 timeout 保護
 - **不支援 TIFF**（Chromium Canvas 限制）
 - 支援：`.jpg .jpeg .png .webp .gif .bmp`
-- TAG 更新：優先嘗試 `eagle.item.update` → `modify` → `set`，三層 fallback
+- TAG 更新：直接用 Eagle HTTP API `POST /api/item/update`（Plugin API 會 hang，不可用）
 
 ---
 
@@ -79,6 +78,7 @@ EAGLE Plugin/
 | `State.hadExif` | 第一張圖是否有 EXIF |
 | `State.firstShowDone` | 首次 show 後不再延遲 |
 | `State.startupItems` | onItemSelectionChanged 快取 |
+| `State.activeFolders` | **v1.9.0** 用戶選定的目標資料夾 ID 集合（Set），null=全部 |
 
 ### settings.js
 | 變數 | 說明 |
@@ -88,16 +88,20 @@ EAGLE Plugin/
 
 ---
 
-## 主要函式（v1.8.0 新增）
+## 主要函式
 
 | 函式 | 說明 |
 |------|------|
-| `getPrimaryFolder(item)` | 取第一個資料夾，回傳 `[folders[0]]` |
+| `updateActiveFolder(items)` | **v1.9.0** 分析資料夾交集，渲染選擇器 UI，更新 State.activeFolders |
+| `getItemFolders(item)` | **v1.9.0** 用 State.activeFolders 過濾，fallback 到 item.folders 全部 |
+| `_eagleHttpUpdate(itemId, tags)` | **v1.9.0** Eagle HTTP API POST /api/item/update（1.5s timeout） |
+| `_fetchFolderNames(ids)` | **v1.9.0** 取得資料夾名稱快取（HTTP /api/folder/list） |
+| `buildAnnotation(pattern, vars)` | **v1.9.0** 依模板生成備註（{suffix} {filename} {name} {date} {format}） |
 | `mergeTags(originalTags, extraTag)` | Set 合併，去重 |
 | `buildGeneratedTags(item, opts)` | 組裝新生成照片的 TAG 陣列 |
-| `appendTagToOriginalItemIfNeeded(item, opts)` | 有變更才呼叫 Eagle API 更新 TAG |
-| `createBatchToken(len)` | 隨機 Token，clamp 4~12 字元 |
-| `buildStampedBaseName(origBase, fileSuffix, opts)` | 依命名模式組裝檔名，限 200 字元 |
+| `appendTagToOriginalItemIfNeeded(item, opts)` | 獨立 try-catch，失敗不影響照片創建計數 |
+| `createBatchToken(len)` | 隨機 Token，clamp 4~12 字元，per-batch |
+| `buildStampedBaseName(origBase, fileSuffix, opts, batchToken)` | 依命名模式組裝檔名，限 200 字元 |
 | `addStampedItemWithUniqueName(tmpPath, payload)` | 最多重試 20 次，衝突自動加 `_2`... |
 
 ---
@@ -121,6 +125,12 @@ window.TimestampPlugin.onTimeSourceChanged = (source) => {}; // settings → mai
 6. **`formatDate()` 不用 `/g` flag** → 重複字元只替換一次
 7. **`buildStampedBaseName` 截斷邏輯順序錯誤** → 應先計算固定部分長度，再截 `{name}`
 8. **TAG 比較用 `JSON.stringify`** → 順序敏感，`mergeTags` 保插入順序，原始在前故可行
+9. **`getPrimaryFolder` 取 `folders[0]` 而非用戶選定** → 改用資料夾選擇器 UI + `State.activeFolders`
+10. **`appendTagToOriginalItemIfNeeded` 錯誤遮蔽照片創建** → 獨立 try-catch，不影響 success 計數
+11. **`cleanupTemp` 立即刪除暫存檔** → 改 setTimeout 延遲 3 秒
+12. **設定面板滾動** → JS `fixHeight` 動態計算 + `window.addEventListener('resize')`
+13. **`eagle.item.update` 會 hang（Promise 永不 resolve）** → 直接用 HTTP API，不嘗試 Plugin API
+14. **Eagle HTTP API 用 POST 不是 PUT** → PUT 回傳 405 Method Not Allowed
 
 ---
 
@@ -182,3 +192,7 @@ burnTimestamp(filePath, opts)
 | `generatedTagInput` | 新照片額外 TAG 輸入框 |
 | `namePatternInput` | 命名模式輸入框 |
 | `batchTokenLengthInput` | Token 長度數字輸入框 |
+| `annotationPatternInput` | **v1.9.0** 備註格式模板輸入框 |
+| `sectionVisual` | **v1.9.0** 可折疊：視覺微調 `<details>` |
+| `sectionTags` | **v1.9.0** 可折疊：TAG 設定 `<details>` |
+| `sectionFile` | **v1.9.0** 可折疊：新檔案設定 `<details>` |

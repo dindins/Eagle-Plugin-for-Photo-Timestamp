@@ -94,14 +94,21 @@ require('os')    // tmpdir()
 插件**無法直接覆蓋原始檔**。工作流程：
 1. Canvas 燒入 → 輸出到 `os.tmpdir()` 暫存檔
 2. `eagle.item.addFromPath(tmp, { name, annotation, tags, folders })` → 加入圖庫為新項目
-3. `cleanupTemp(tmp)` → 刪除暫存檔
+3. `setTimeout(cleanupTemp, 3000)` → 延遲 3 秒刪除暫存檔（避免競態）
 
-**v1.7.0 檔名邏輯**：
+## TAG 更新（v1.9.0）
+
+**不可使用 Plugin API** — `eagle.item.update()` 在 Eagle 4 中會 hang（Promise 永不 resolve）。
+
+正確方式：Eagle HTTP API
 ```js
-const fileSuffix = (opts.suffix || TimestampEngine.formatDate(new Date(), 'YYYY-MM-DD'))
-    .replace(/[\/\\:*?"<>|]/g, '_');
-const newName = `${origBase}_${fileSuffix}`;
+// Node.js http 模組（無 CORS 限制）
+POST http://127.0.0.1:41595/api/item/update
+Content-Type: application/json
+Body: { "id": "item-id", "tags": ["tag1", "tag2"] }
 ```
+
+注意：**必須用 POST**，PUT 回傳 405 Method Not Allowed。
 
 ---
 

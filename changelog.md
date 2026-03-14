@@ -1,5 +1,30 @@
 # Eagle Timestamp Plugin - 變更日誌 (Changelog)
 
+## [1.9.0] - 2026-03-14
+
+### 新增 (Added)
+- **可折疊設定面板**：使用原生 `<details>/<summary>` 將設定分為四區：主要設定（時間來源、時間顯示、顯示格式）永遠展開；「視覺微調」、「TAG 設定」、「新檔案設定」三區可折疊，展開狀態自動記憶（獨立 localStorage 鍵 `TimestampPluginSections`）
+- **自訂備註格式**：新增 `annotationPatternInput`，支援 `{suffix}`、`{filename}`、`{name}`、`{date}`、`{format}` 五個變數，預設 `[時間戳記:{suffix}] 原始檔案：{filename}`（向後相容）
+- **資料夾選擇器**：footer 顯示 `📂 存入：` 按鈕組，從選取照片的資料夾交集/聯集動態生成，預設全選，點擊切換開/關（至少保留一個）；資料夾名稱透過 Eagle HTTP API 取得並快取；唯一資料夾時自動設定不顯示選擇器
+
+### 修復 (Fixed)
+- **副本放錯資料夾**：v1.8.0 的 `getPrimaryFolder` 永遠取 `item.folders[0]`，與用戶瀏覽的資料夾無關。改為由資料夾選擇器 UI 控制目標（`State.activeFolders`），預設全選
+- **原始照片 TAG 不生效**：Plugin API `eagle.item.update` 在 Eagle 4 中可能 hang（Promise 永不 resolve）；HTTP API 用了 PUT 但 Eagle 只接受 POST（回傳 405）。修正為跳過 Plugin API，直接用 Eagle HTTP API `POST /api/item/update`（Node.js http 模組，1.5 秒 timeout）
+- **TAG 更新錯誤遮蔽照片創建成功**：`appendTagToOriginalItemIfNeeded` 改為獨立 try-catch，不影響 success 計數
+- **多檔處理卡住**：`eagle.item.update` hang 導致每張等待超時。移除 Plugin API 嘗試，HTTP API timeout 從 3 秒降到 1.5 秒
+- **暫存檔競態刪除**：`cleanupTemp` 改為 `setTimeout` 延遲 3 秒
+- **MIME/副檔名不匹配**：改用已有的 `MIME_MAP`，暫存檔副檔名統一為對應 MIME 的正確副檔名
+- **設定面板展開後無法滾動**：`.settings-panel` 加 `overflow: hidden`；`.settings` 高度由 JS 動態計算（`fixHeight`），監聽 `resize` 事件即時調整
+- **Batch Token per-item 而非 per-batch**：迴圈外生成一次，同批次共用
+- **展開折疊區段後看不到內容**：`<details>` toggle 事件呼叫 `scrollIntoView({ behavior: 'smooth', block: 'start' })`
+
+### 變更 (Changed)
+- 設定面板 UI 重構為「主要設定 + 三個可折疊區段」
+- 備註欄從寫死改為可自訂模板（`buildAnnotation` 函式）
+- TAG 更新統一走 Eagle HTTP API（`POST /api/item/update`），不再嘗試 Plugin API
+
+---
+
 ## [1.8.0] - 2026-03-13
 
 ### 新增 (Added)

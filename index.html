@@ -5,7 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>時間戳記工具</title>
-  <!-- 全域錯誤攔截已移至 main.js 最頂部的 DevTools 防護層 -->
   <link rel="stylesheet" href="css/style.css" />
 </head>
 
@@ -25,6 +24,8 @@
       <aside class="settings-panel">
         <div class="settings">
 
+          <!-- ═══ 主要設定（永遠展開） ═══ -->
+
           <!-- ① 時間來源 -->
           <div class="setting-group">
             <label class="setting-label">⏰ 時間來源</label>
@@ -35,7 +36,7 @@
             </div>
           </div>
 
-          <!-- ② 時間預覽顯示（所有模式皆顯示） -->
+          <!-- ② 時間預覽顯示 -->
           <div class="setting-group" id="manualDateGroup">
             <label class="setting-label">
               <span id="timeDisplayLabel">📸 原始照片時間</span>
@@ -57,107 +58,142 @@
             </select>
           </div>
 
-          <!-- ④ 位置 -->
-          <div class="setting-group">
-            <label class="setting-label">📌 底部文字位置</label>
-            <div class="toggle-group" id="positionToggle">
-              <button class="toggle-btn" data-pos="bottom-left">↙ 左</button>
-              <button class="toggle-btn" data-pos="bottom-center">↓ 中</button>
-              <button class="toggle-btn active" data-pos="bottom-right">↘ 右</button>
+          <!-- ═══ 可折疊：視覺微調 ═══ -->
+          <details class="settings-section collapsible" id="sectionVisual">
+            <summary class="section-header">
+              <span class="section-chevron">▶</span>
+              🎨 視覺微調
+            </summary>
+            <div class="section-body">
+
+              <div class="setting-group">
+                <label class="setting-label">📌 底部文字位置</label>
+                <div class="toggle-group" id="positionToggle">
+                  <button class="toggle-btn" data-pos="bottom-left">↙ 左</button>
+                  <button class="toggle-btn" data-pos="bottom-center">↓ 中</button>
+                  <button class="toggle-btn active" data-pos="bottom-right">↘ 右</button>
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">🔤 字型大小 (相對比例 %)</label>
+                <div class="slider-row">
+                  <input type="range" id="fontSize" class="slider" min="1" max="20" value="4">
+                  <input type="number" id="fontSizeInput" class="number-input" min="1" max="20" value="4">
+                </div>
+              </div>
+
+              <div class="color-row">
+                <div class="setting-group color-item">
+                  <label class="setting-label">🎨 文字顏色</label>
+                  <input type="color" id="textColor" class="color-input" value="#FF9900">
+                </div>
+                <div class="setting-group color-item">
+                  <label class="setting-label">🖌️ 背景顏色</label>
+                  <input type="color" id="bgColor" class="color-input" value="#000000">
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">🪟 背景透明度</label>
+                <div class="slider-row">
+                  <input type="range" id="bgOpacity" class="slider" min="0" max="100" value="0">
+                  <span class="value-badge" id="bgOpacityValue">0%</span>
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">↔ 水平邊距 (X)</label>
+                <div class="slider-row">
+                  <input type="range" id="paddingX" class="slider" min="0" max="10" value="3">
+                  <span class="value-badge" id="paddingXValue">3%</span>
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">↕ 垂直邊距 (Y)</label>
+                <div class="slider-row">
+                  <input type="range" id="paddingY" class="slider" min="0" max="10" value="3">
+                  <span class="value-badge" id="paddingYValue">3%</span>
+                </div>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">💡 文字陰影</label>
+                <div class="toggle-group" id="shadowToggle">
+                  <button class="toggle-btn active" data-shadow="on">✨ 開啟</button>
+                  <button class="toggle-btn" data-shadow="off">關閉</button>
+                </div>
+              </div>
+
             </div>
-          </div>
+          </details>
 
-          <!-- ⑤ 字型大小 -->
-          <div class="setting-group">
-            <label class="setting-label">🔤 字型大小 (相對比例 %)</label>
-            <div class="slider-row">
-              <input type="range" id="fontSize" class="slider" min="1" max="20" value="4">
-              <input type="number" id="fontSizeInput" class="number-input" min="1" max="20" value="4">
+          <!-- ═══ 可折疊：TAG 設定 ═══ -->
+          <details class="settings-section collapsible" id="sectionTags">
+            <summary class="section-header">
+              <span class="section-chevron">▶</span>
+              🏷️ TAG 設定
+            </summary>
+            <div class="section-body">
+
+              <div class="setting-group">
+                <label class="setting-label">🏷️ 原始照片 TAG</label>
+                <label><input type="checkbox" id="tagOriginalEnabled"> 套用後替原始照片新增 TAG</label>
+                <input type="text" id="originalTagInput" class="text-input"
+                       placeholder="例如：待檢查（留空則不新增）" maxlength="50" />
+                <p class="hint">僅影響你目前選取的原始照片</p>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">🆕 新產生照片 TAG</label>
+                <label><input type="checkbox" id="newPhotoUseOriginalTags" checked> 使用原始照片 TAG</label>
+                <label><input type="checkbox" id="tagGeneratedEnabled"> 額外新增 TAG</label>
+                <input type="text" id="generatedTagInput" class="text-input"
+                       placeholder="例如：已加日期（留空則不新增）" maxlength="50" />
+                <p class="hint">可選擇保留原始 TAG，並另外增加新 TAG</p>
+              </div>
+
             </div>
-          </div>
+          </details>
 
-          <!-- 顏色與透明度 -->
-          <div class="color-row">
-            <div class="setting-group color-item">
-              <label class="setting-label">🎨 文字顏色</label>
-              <input type="color" id="textColor" class="color-input" value="#FF9900">
+          <!-- ═══ 可折疊：新檔案設定 ═══ -->
+          <details class="settings-section collapsible" id="sectionFile">
+            <summary class="section-header">
+              <span class="section-chevron">▶</span>
+              📄 新檔案設定
+            </summary>
+            <div class="section-body">
+
+              <div class="setting-group">
+                <label class="setting-label">📝 檔名後綴</label>
+                <input type="text" id="suffixInput" class="text-input"
+                       placeholder="留空自動產生日期（例：2026-02-23）" maxlength="50" />
+                <p class="hint">自訂：photo_後綴.jpg ｜ 留空：photo_2026-02-23.jpg</p>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">🔧 檔名命名方式</label>
+                <input type="text" id="namePatternInput" class="text-input"
+                       placeholder="{name}_{suffix}_{token}" maxlength="80" value="{name}_{suffix}_{token}" />
+                <div class="slider-row">
+                  <label for="batchTokenLengthInput">批次 Token 長度</label>
+                  <input type="number" id="batchTokenLengthInput" class="number-input" min="4" max="12" value="6">
+                </div>
+                <p class="hint">可用變數：{name}、{suffix}、{token}</p>
+              </div>
+
+              <div class="setting-group">
+                <label class="setting-label">📋 備註格式</label>
+                <input type="text" id="annotationPatternInput" class="text-input"
+                       value="[時間戳記:{suffix}] 原始檔案：{filename}"
+                       placeholder="[時間戳記:{suffix}] 原始檔案：{filename}" maxlength="200" />
+                <p class="hint">可用變數：{suffix}、{filename}、{name}、{date}、{format}</p>
+              </div>
+
             </div>
-            <div class="setting-group color-item">
-              <label class="setting-label">🖌️ 背景顏色</label>
-              <input type="color" id="bgColor" class="color-input" value="#000000">
-            </div>
-          </div>
+          </details>
 
-          <div class="setting-group">
-            <label class="setting-label">🪟 背景透明度</label>
-            <div class="slider-row">
-              <input type="range" id="bgOpacity" class="slider" min="0" max="100" value="0">
-              <span class="value-badge" id="bgOpacityValue">0%</span>
-            </div>
-          </div>
-
-          <!-- 水平邊距 (X) -->
-          <div class="setting-group">
-            <label class="setting-label">↔ 水平邊距 (X)</label>
-            <div class="slider-row">
-              <input type="range" id="paddingX" class="slider" min="0" max="10" value="3">
-              <span class="value-badge" id="paddingXValue">3%</span>
-            </div>
-          </div>
-
-          <!-- 垂直邊距 (Y) -->
-          <div class="setting-group">
-            <label class="setting-label">↕ 垂直邊距 (Y)</label>
-            <div class="slider-row">
-              <input type="range" id="paddingY" class="slider" min="0" max="10" value="3">
-              <span class="value-badge" id="paddingYValue">3%</span>
-            </div>
-          </div>
-
-          <!-- 文字陰影 -->
-          <div class="setting-group">
-            <label class="setting-label">💡 文字陰影</label>
-            <div class="toggle-group" id="shadowToggle">
-              <button class="toggle-btn active" data-shadow="on">✨ 開啟</button>
-              <button class="toggle-btn" data-shadow="off">關閉</button>
-            </div>
-          </div>
-
-          <div class="setting-group">
-            <label class="setting-label">🏷️ 原始照片 TAG 設定</label>
-            <label><input type="checkbox" id="tagOriginalEnabled"> 套用後替原始照片新增 TAG</label>
-            <input type="text" id="originalTagInput" class="text-input"
-                   placeholder="例如：待檢查（留空則不新增）" maxlength="50" />
-            <p class="hint">僅影響你目前選取的原始照片</p>
-          </div>
-
-          <div class="setting-group">
-            <label class="setting-label">🆕 新產生照片 TAG 設定</label>
-            <label><input type="checkbox" id="newPhotoUseOriginalTags" checked> 使用原始照片 TAG</label>
-            <label><input type="checkbox" id="tagGeneratedEnabled"> 額外新增 TAG</label>
-            <input type="text" id="generatedTagInput" class="text-input"
-                   placeholder="例如：已加日期（留空則不新增）" maxlength="50" />
-            <p class="hint">可選擇保留原始 TAG，並另外增加新 TAG</p>
-          </div>
-
-          <!-- ⑧ 檔名後綴 -->
-          <div class="setting-group">
-            <label class="setting-label">📝 檔名後綴</label>
-            <input type="text" id="suffixInput" class="text-input"
-                   placeholder="留空自動產生日期（例：2026-02-23）" maxlength="50" />
-            <p class="hint">自訂：photo_後綴.jpg ｜ 留空：photo_2026-02-23.jpg</p>
-          </div>
-
-          <div class="setting-group">
-            <label class="setting-label">🔧 檔名命名方式</label>
-            <input type="text" id="namePatternInput" class="text-input"
-                   placeholder="{name}_{suffix}_{token}" maxlength="80" value="{name}_{suffix}_{token}" />
-            <div class="slider-row">
-              <label for="batchTokenLengthInput">批次 Token 長度</label>
-              <input type="number" id="batchTokenLengthInput" class="number-input" min="4" max="12" value="6">
-            </div>
-            <p class="hint">可用變數：{name}、{suffix}、{token}（目前預設長度為 6）</p>
-          </div>
         </div>
 
         <!-- 底部套用按鈕區 -->
@@ -166,6 +202,10 @@
             <span class="info-icon">ℹ️</span>
             <span id="infoText">請在 Eagle 中選取照片</span>
             <button id="refreshBtn" class="icon-btn refresh-btn" title="重新整理選取">🔄</button>
+          </div>
+          <div class="folder-picker" id="folderPicker" style="display:none">
+            <span class="folder-picker-label">📂 存入：</span>
+            <div class="folder-picker-btns" id="folderPickerBtns"></div>
           </div>
           <button class="btn-apply" id="applyBtn" disabled>
             <span class="btn-icon">⏱</span>
