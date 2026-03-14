@@ -98,17 +98,36 @@ require('os')    // tmpdir()
 
 ## TAG 更新（v1.9.0）
 
-**不可使用 Plugin API** — `eagle.item.update()` 在 Eagle 4 中會 hang（Promise 永不 resolve）。
+**不可使用 Plugin API** — `eagle.item.update()` 會 hang（Promise 永不 resolve）。
 
-正確方式：Eagle HTTP API
+正確方式：**直接修改 metadata.json**（零 API 依賴）
 ```js
-// Node.js http 模組（無 CORS 限制）
-POST http://127.0.0.1:41595/api/item/update
-Content-Type: application/json
-Body: { "id": "item-id", "tags": ["tag1", "tag2"] }
+// 路徑推算
+const metaPath = path.dirname(item.filePath) + '/metadata.json';
+// 讀取 → 修改 tags → 寫回
+const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+meta.tags.push('newTag');
+meta.lastModified = Date.now();
+fs.writeFileSync(metaPath, JSON.stringify(meta), 'utf8');
 ```
 
-注意：**必須用 POST**，PUT 回傳 405 Method Not Allowed。
+可選：HTTP API 通知 Eagle 刷新（API 未啟用時靜默跳過）
+```
+POST http://127.0.0.1:41595/api/item/update  （必須 POST，PUT 回傳 405）
+```
+
+## 圖庫檔案結構（v1.9.0）
+
+```
+{EAGLE_LIBRARY}/
+├── metadata.json              ← 資料夾樹（id→name 對照）
+└── images/
+    └── {item_id}.info/
+        ├── metadata.json      ← item 的 tags/folders/annotation 等
+        └── {filename}.jpg     ← 原始檔案（item.filePath 指向這裡）
+```
+
+圖庫路徑推算：`item.filePath` 中 `/images/` 之前的部分。
 
 ---
 

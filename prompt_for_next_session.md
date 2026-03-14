@@ -60,7 +60,9 @@ EAGLE Plugin/
 - `getSelected()` 可能 timeout → 已加 retry + 2秒 timeout 保護
 - **不支援 TIFF**（Chromium Canvas 限制）
 - 支援：`.jpg .jpeg .png .webp .gif .bmp`
-- TAG 更新：直接用 Eagle HTTP API `POST /api/item/update`（Plugin API 會 hang，不可用）
+- TAG 更新：直接寫 `metadata.json`（零 API 依賴）+ HTTP API 通知刷新（可選）
+- 圖庫路徑：從 `item.filePath` 推算，快取在 `_libraryPath`
+- 資料夾名稱：讀 `{library}/metadata.json`，不依賴 HTTP API
 
 ---
 
@@ -94,8 +96,9 @@ EAGLE Plugin/
 |------|------|
 | `updateActiveFolder(items)` | **v1.9.0** 分析資料夾交集，渲染選擇器 UI，更新 State.activeFolders |
 | `getItemFolders(item)` | **v1.9.0** 用 State.activeFolders 過濾，fallback 到 item.folders 全部 |
-| `_eagleHttpUpdate(itemId, tags)` | **v1.9.0** Eagle HTTP API POST /api/item/update（1.5s timeout） |
-| `_fetchFolderNames(ids)` | **v1.9.0** 取得資料夾名稱快取（HTTP /api/folder/list） |
+| `_getLibraryPath(filePath)` | **v1.9.0** 從 filePath 推算圖庫根目錄，快取結果 |
+| `_getItemMetaPath(item)` | **v1.9.0** 取得 item 的 metadata.json 路徑 |
+| `_ensureFolderNames(items)` | **v1.9.0** 載入資料夾名稱（讀檔優先，HTTP fallback） |
 | `buildAnnotation(pattern, vars)` | **v1.9.0** 依模板生成備註（{suffix} {filename} {name} {date} {format}） |
 | `mergeTags(originalTags, extraTag)` | Set 合併，去重 |
 | `buildGeneratedTags(item, opts)` | 組裝新生成照片的 TAG 陣列 |

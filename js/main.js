@@ -424,34 +424,90 @@ function getItemFolders(item) {
     return [...item.folders];
 }
 
-// ── 資料夾名稱快取 ──
+// ── 圖庫路徑與 metadata 工具（零 API 依賴） ──
 const _folderNameCache = {};
+let _libraryPath = null;
 
-function _fetchFolderNames(folderIds) {
-    return new Promise((resolve) => {
-        try {
-            const http = require('http');
-            const req = http.get('http://127.0.0.1:41595/api/folder/list', { timeout: 2000 }, (res) => {
-                let data = '';
-                res.on('data', c => { data += c; });
-                res.on('end', () => {
-                    try {
-                        const all = JSON.parse(data).data || [];
-                        const _walk = (folders) => {
-                            for (const f of folders) {
-                                _folderNameCache[f.id] = f.name;
-                                if (Array.isArray(f.children)) _walk(f.children);
-                            }
-                        };
-                        _walk(all);
-                    } catch (_) { }
-                    resolve();
+/** 從 item.filePath 推算 Eagle 圖庫根目錄 */
+function _getLibraryPath(filePath) {
+    if (_libraryPath) return _libraryPath;
+    if (!filePath) return null;
+    const normalized = filePath.replace(/\\/g, '/');
+    const idx = normalized.indexOf('/images/');
+    if (idx > 0) {
+        _libraryPath = normalized.slice(0, idx);
+    }
+    return _libraryPath;
+}
+
+/** 取得 item 的 metadata.json 路徑 */
+function _getItemMetaPath(item) {
+    const fp = item && (item.filePath || item.fileURL);
+    if (!fp) return null;
+    const nodePath = require('path');
+    return nodePath.join(nodePath.dirname(fp), 'metadata.json');
+}
+
+/** 從圖庫 metadata.json 讀取資料夾名稱（直接讀檔，不需 API） */
+function _loadFolderNamesFromDisk(libraryPath) {
+    if (!libraryPath) return;
+    try {
+        const fs = require('fs');
+        const nodePath = require('path');
+        const metaFile = nodePath.join(libraryPath, 'metadata.json');
+        if (!fs.existsSync(metaFile)) return;
+        const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+        const walk = (folders) => {
+            if (!Array.isArray(folders)) return;
+            for (const f of folders) {
+                if (f.id && f.name) _folderNameCache[f.id] = f.name;
+                if (Array.isArray(f.children)) walk(f.children);
+            }
+        };
+        walk(meta.folders);
+    } catch (_) { }
+}
+
+/** 載入資料夾名稱（優先讀檔，降級到 HTTP API） */
+async function _ensureFolderNames(items) {
+    // 嘗試從 item.filePath 推算圖庫路徑
+    if (!_libraryPath && items && items.length > 0) {
+        for (const item of items) {
+            _getLibraryPath(item.filePath || item.fileURL);
+            if (_libraryPath) break;
+        }
+    }
+    // 策略 1: 直接讀圖庫 metadata.json
+    if (_libraryPath && Object.keys(_folderNameCache).length === 0) {
+        _loadFolderNamesFromDisk(_libraryPath);
+    }
+    // 策略 2: HTTP API fallback（API 啟用時速度更快）
+    if (Object.keys(_folderNameCache).length === 0) {
+        await new Promise((resolve) => {
+            try {
+                const http = require('http');
+                const req = http.get('http://127.0.0.1:41595/api/folder/list', { timeout: 1500 }, (res) => {
+                    let data = '';
+                    res.on('data', c => { data += c; });
+                    res.on('end', () => {
+                        try {
+                            const all = JSON.parse(data).data || [];
+                            const walk = (folders) => {
+                                for (const f of folders) {
+                                    _folderNameCache[f.id] = f.name;
+                                    if (Array.isArray(f.children)) walk(f.children);
+                                }
+                            };
+                            walk(all);
+                        } catch (_) { }
+                        resolve();
+                    });
                 });
-            });
-            req.on('error', () => resolve());
-            req.on('timeout', () => { req.destroy(); resolve(); });
-        } catch (_) { resolve(); }
-    });
+                req.on('error', () => resolve());
+                req.on('timeout', () => { req.destroy(); resolve(); });
+            } catch (_) { resolve(); }
+        });
+    }
 }
 
 /**
@@ -501,7 +557,7 @@ async function updateActiveFolder(items) {
     }
 
     // 多資料夾 → 取得名稱，顯示選擇器（預設全選）
-    await _fetchFolderNames(candidates);
+    await _ensureFolderNames(items);
     State.activeFolders = new Set(candidates);
 
     btnsEl.innerHTML = '';
@@ -544,34 +600,10 @@ function buildGeneratedTags(item, opts) {
 }
 
 /**
- * 透過 Eagle HTTP API 更新原始照片 TAG（Node.js http 模組，無 CORS 限制）
- * 帶 3 秒 timeout 避免卡住
+ * 更新原始照片 TAG
+ * 策略 1: 直接修改 metadata.json（零 API 依賴，100% 可靠）
+ * 策略 2: HTTP API POST /api/item/update（觸發 Eagle UI 刷新）
  */
-function _eagleHttpUpdate(itemId, tags) {
-    return new Promise((resolve) => {
-        try {
-            const http = require('http');
-            const body = JSON.stringify({ id: itemId, tags });
-            const req = http.request({
-                hostname: '127.0.0.1',
-                port: 41595,
-                path: '/api/item/update',
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-                timeout: 1500,
-            }, (res) => {
-                let data = '';
-                res.on('data', c => { data += c; });
-                res.on('end', () => resolve(res.statusCode >= 200 && res.statusCode < 300));
-            });
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => { req.destroy(); resolve(false); });
-            req.write(body);
-            req.end();
-        } catch (_) { resolve(false); }
-    });
-}
-
 async function appendTagToOriginalItemIfNeeded(item, opts) {
     if (!opts.tagOriginalEnabled || !opts.originalTag) return;
     if (!item || !item.id) return;
@@ -584,11 +616,46 @@ async function appendTagToOriginalItemIfNeeded(item, opts) {
 
     const newTags = [...existing, tagToAdd];
 
-    // 直接用 Eagle HTTP API（Plugin API 的 eagle.item.update 可能 hang，已驗證 HTTP 可靠）
-    const ok = await _eagleHttpUpdate(item.id, newTags);
-    if (ok) return;
+    // 策略 1: 直接寫 metadata.json（不需要 HTTP API）
+    let diskOk = false;
+    try {
+        const metaPath = _getItemMetaPath(item);
+        if (metaPath) {
+            const fs = require('fs');
+            if (fs.existsSync(metaPath)) {
+                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                if (!Array.isArray(meta.tags)) meta.tags = [];
+                if (!meta.tags.includes(tagToAdd)) {
+                    meta.tags.push(tagToAdd);
+                    meta.lastModified = Date.now();
+                    fs.writeFileSync(metaPath, JSON.stringify(meta), 'utf8');
+                    diskOk = true;
+                } else {
+                    diskOk = true; // 已存在，不需寫入
+                }
+            }
+        }
+    } catch (_) { }
 
-    _log.warn('[TimestampTool] TAG 更新失敗：item.id=' + item.id);
+    // 策略 2: HTTP API 通知 Eagle 刷新（可選，API 未啟用時靜默跳過）
+    try {
+        const http = require('http');
+        const body = JSON.stringify({ id: item.id, tags: newTags });
+        const req = http.request({
+            hostname: '127.0.0.1', port: 41595,
+            path: '/api/item/update', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: 1500,
+        }, () => {});
+        req.on('error', () => {});
+        req.on('timeout', () => req.destroy());
+        req.write(body);
+        req.end();
+    } catch (_) { }
+
+    if (!diskOk) {
+        _log.warn('[TimestampTool] TAG 更新失敗：item.id=' + item.id);
+    }
 }
 
 function buildAnnotation(pattern, vars) {

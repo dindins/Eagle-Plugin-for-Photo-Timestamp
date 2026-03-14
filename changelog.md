@@ -9,7 +9,8 @@
 
 ### 修復 (Fixed)
 - **副本放錯資料夾**：v1.8.0 的 `getPrimaryFolder` 永遠取 `item.folders[0]`，與用戶瀏覽的資料夾無關。改為由資料夾選擇器 UI 控制目標（`State.activeFolders`），預設全選
-- **原始照片 TAG 不生效**：Plugin API `eagle.item.update` 在 Eagle 4 中可能 hang（Promise 永不 resolve）；HTTP API 用了 PUT 但 Eagle 只接受 POST（回傳 405）。修正為跳過 Plugin API，直接用 Eagle HTTP API `POST /api/item/update`（Node.js http 模組，1.5 秒 timeout）
+- **原始照片 TAG 不生效**：Plugin API `eagle.item.update` 會 hang；HTTP API 用了 PUT 但 Eagle 只接受 POST（405）。改為**直接修改 `metadata.json`**（零 API 依賴），再用 HTTP API 通知 Eagle 刷新（可選，API 未啟用時靜默跳過）
+- **HTTP API 依賴風險**：資料夾名稱取得改為優先讀 `{library}/metadata.json`（直接讀檔），HTTP API 降級為 fallback
 - **TAG 更新錯誤遮蔽照片創建成功**：`appendTagToOriginalItemIfNeeded` 改為獨立 try-catch，不影響 success 計數
 - **多檔處理卡住**：`eagle.item.update` hang 導致每張等待超時。移除 Plugin API 嘗試，HTTP API timeout 從 3 秒降到 1.5 秒
 - **暫存檔競態刪除**：`cleanupTemp` 改為 `setTimeout` 延遲 3 秒

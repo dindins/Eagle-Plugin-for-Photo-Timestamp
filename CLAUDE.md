@@ -20,7 +20,8 @@ Eagle 4 Window Plugin，為照片燒入視覺化時間戳記。Chromium 107 + No
 ### Eagle API Constraints
 - `item.filePath`, `item.name` 等是 READ-ONLY — 永遠不要賦值
 - `addFromPath(path, options)` 2-arg format；目標資料夾由 UI 選擇器 `State.activeFolders` 控制
-- TAG 更新**必須用 HTTP API** `POST /api/item/update`（Plugin API `eagle.item.update` 會 hang）
+- TAG 更新：先寫 `metadata.json`（零 API 依賴），再用 HTTP API 通知刷新（可選）
+- Plugin API `eagle.item.update` 會 hang — 永遠不要用
 - `getSelected()` startup timeout — 用 Promise.race + retry
 - TIFF 不支援；支援格式：.jpg .jpeg .png .webp .gif .bmp
 
@@ -38,7 +39,8 @@ Eagle 4 Window Plugin，為照片燒入視覺化時間戳記。Chromium 107 + No
 - `cleanupTemp`: 用 setTimeout 延遲 3 秒，避免 Eagle 尚在讀取
 - 資料夾選擇：由 footer UI 選擇器控制，`State.activeFolders`（Set），預設全選
 - 設定面板滾動：JS `fixHeight` 動態計算 + `window.addEventListener('resize')`
-- `eagle.item.update` 會 hang — 永遠不要 await Plugin API 的 item 更新方法
+- 圖庫路徑：從 `item.filePath` 推算（`/images/` 之前的部分），快取在 `_libraryPath`
+- 資料夾名稱：讀 `{library}/metadata.json`，不依賴 HTTP API
 
 > v1.9.0 Key Patterns（可折疊 UI、備註模板、資料夾偵測）：見 `prompt_for_next_session.md`
 
